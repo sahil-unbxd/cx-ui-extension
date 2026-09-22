@@ -5,117 +5,185 @@
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <header>
-    <h1>CX Debug Assistant</h1>
-    <nav class="tabs">
-      <button class="tab is-active" data-tab="debug">Debug</button>
-      <button class="tab" data-tab="settings">Settings</button>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <path d="M15.5 15.5 L21 21" />
+        </svg>
+      </span>
+      <div class="brand-text">
+        <strong>CX Debug Assistant</strong>
+        <span id="conn-state" class="conn-state">Idle</span>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="debug" role="tab">Debug</button>
+      <button class="tab" data-tab="settings" role="tab">Settings</button>
     </nav>
   </header>
 
   <section id="panel-debug" class="panel">
-    <div id="key-warning" class="banner warn" hidden>
-      No API key for <span id="key-warning-provider">Claude</span>. Add one in the
-      <a href="#" data-goto="settings">Settings tab</a>.
+    <div id="key-warning" class="banner" hidden>
+      <span class="banner-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M12 8v5" /><path d="M12 16.5v.01" />
+          <path d="M10.3 3.6 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z" />
+        </svg>
+      </span>
+      <div>
+        No API key for <span id="key-warning-provider">Claude</span>.
+        <a href="#" data-goto="settings">Add one →</a>
+      </div>
     </div>
 
-    <label class="field">
-      <span>Issue type</span>
-      <select id="issue-type"></select>
-      <small id="issue-hint"></small>
-    </label>
+    <div class="field">
+      <label class="field-label" for="issue-type">Issue type</label>
+      <div class="select-wrap">
+        <select id="issue-type"></select>
+        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </div>
+      <p id="issue-hint" class="field-hint"></p>
+    </div>
 
-    <label class="field">
-      <span>What's wrong?</span>
-      <textarea id="description" rows="4" placeholder="e.g. Autosuggest dropdown appears ~40px to the left of the search box on category pages"></textarea>
-    </label>
+    <div class="field">
+      <label class="field-label" for="description">What's wrong?</label>
+      <textarea id="description" rows="3" placeholder="e.g. Autosuggest shows keyword suggestions but no popular products"></textarea>
+    </div>
 
-    <details id="selector-overrides" hidden>
-      <summary>Selector overrides (optional)</summary>
-      <label class="field"><span>Search input selector</span><input id="input-selector" placeholder="auto-detect" /></label>
-      <label class="field"><span>Dropdown selector</span><input id="dropdown-selector" placeholder="auto-detect" /></label>
+    <details id="selector-overrides" class="disclosure" hidden>
+      <summary>Selector overrides</summary>
+      <div class="disclosure-body">
+        <div class="field compact">
+          <label class="field-label" for="input-selector">Search input selector</label>
+          <input id="input-selector" placeholder="auto-detect" />
+        </div>
+        <div class="field compact">
+          <label class="field-label" for="dropdown-selector">Dropdown selector</label>
+          <input id="dropdown-selector" placeholder="auto-detect" />
+        </div>
+      </div>
     </details>
 
-    <label class="check">
-      <input type="checkbox" id="agent-mode" checked />
-      <span>Let the model investigate with tools <small>— keeps the debugger attached and queries the live page</small></span>
-    </label>
-
-    <label class="check">
-      <input type="checkbox" id="reload-on-start" checked />
-      <span>Reload the page when capture starts <small>— catches the SDK bundles and the first API call</small></span>
-    </label>
-
-    <label class="check" id="auto-stop-row" hidden>
-      <input type="checkbox" id="auto-stop" checked />
-      <span>Stop automatically once the evidence is conclusive <small>— no need to click Stop & analyse yourself</small></span>
-    </label>
+    <details class="disclosure" id="capture-options">
+      <summary>Capture options</summary>
+      <div class="disclosure-body">
+        <label class="check">
+          <input type="checkbox" id="agent-mode" checked />
+          <span class="check-text">
+            <span class="check-title">Investigate with tools</span>
+            <span class="check-sub">Model queries the live page instead of one static capture</span>
+          </span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="reload-on-start" checked />
+          <span class="check-text">
+            <span class="check-title">Reload page on start</span>
+            <span class="check-sub">Catches the SDK bundles and the first API call</span>
+          </span>
+        </label>
+        <label class="check" id="auto-stop-row" hidden>
+          <input type="checkbox" id="auto-stop" checked />
+          <span class="check-text">
+            <span class="check-title">Stop automatically</span>
+            <span class="check-sub">Ends the capture once the evidence is conclusive</span>
+          </span>
+        </label>
+      </div>
+    </details>
 
     <div class="actions">
-      <button id="start" class="primary">Start capture</button>
-      <button id="stop" class="primary" hidden>Stop &amp; analyse</button>
-      <button id="cancel" hidden>Cancel</button>
+      <button id="start" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+        </svg>
+        Start capture
+      </button>
+      <button id="stop" class="btn btn-danger" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true">
+          <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none" />
+        </svg>
+        Stop &amp; analyse
+      </button>
+      <button id="cancel" class="btn btn-ghost" hidden>Cancel</button>
     </div>
 
     <p id="status" class="status"></p>
 
     <div id="result" hidden>
-      <div class="result-head">
-        <strong>Analysis</strong>
-        <span id="result-meta" class="meta"></span>
-        <button id="copy" class="link">Copy</button>
-      </div>
-      <div id="verdicts" class="verdict" hidden></div>
-      <details id="trace-box" hidden>
-        <summary>Investigation trace (<span id="trace-count">0</span> steps)</summary>
-        <div id="trace" class="trace"></div>
+      <div id="verdicts" class="verdicts" hidden></div>
+
+      <details id="trace-box" class="disclosure" hidden>
+        <summary>Investigation trace <span class="pill" id="trace-count">0</span></summary>
+        <div class="disclosure-body"><div id="trace" class="trace"></div></div>
       </details>
-      <pre id="answer"></pre>
-      <div id="fix-prompt-box" hidden>
-        <div class="result-head">
-          <strong>Fix prompt</strong>
-          <span class="meta">paste into your coding agent</span>
-          <button id="copy-fix" class="link">Copy</button>
+
+      <div class="card">
+        <div class="card-head">
+          <strong>Analysis</strong>
+          <span id="result-meta" class="meta"></span>
+          <button id="copy" class="btn btn-mini">Copy</button>
         </div>
-        <pre id="fix-prompt"></pre>
+        <pre id="answer" class="card-body"></pre>
       </div>
-      <details>
+
+      <div id="fix-prompt-box" class="card accent" hidden>
+        <div class="card-head">
+          <strong>Fix prompt</strong>
+          <span class="meta">for your coding agent</span>
+          <button id="copy-fix" class="btn btn-mini">Copy</button>
+        </div>
+        <pre id="fix-prompt" class="card-body"></pre>
+      </div>
+
+      <details class="disclosure">
         <summary>Prompt sent to the model</summary>
-        <pre id="sent-prompt" class="small"></pre>
+        <div class="disclosure-body"><pre id="sent-prompt" class="mono-sm"></pre></div>
       </details>
-      <details>
-        <summary>Captured context (redacted)</summary>
-        <pre id="captured" class="small"></pre>
+      <details class="disclosure">
+        <summary>Captured context <span class="pill muted">redacted</span></summary>
+        <div class="disclosure-body"><pre id="captured" class="mono-sm"></pre></div>
       </details>
     </div>
   </section>
 
   <section id="panel-settings" class="panel" hidden>
-    <label class="field">
-      <span>Provider</span>
-      <select id="provider"></select>
-    </label>
-    <label class="field">
-      <span>Model</span>
-      <select id="model"></select>
-    </label>
-    <label class="field">
-      <span>API key <small id="key-help"></small></span>
-      <input id="api-key" type="password" autocomplete="off" />
-    </label>
-    <label class="field">
-      <span>Prompt token budget</span>
+    <div class="field">
+      <label class="field-label" for="provider">Provider</label>
+      <div class="select-wrap">
+        <select id="provider"></select>
+        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="model">Model</label>
+      <div class="select-wrap">
+        <select id="model"></select>
+        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="api-key">API key <small id="key-help"></small></label>
+      <input id="api-key" type="password" autocomplete="off" placeholder="sk-…" />
+    </div>
+    <div class="field">
+      <label class="field-label" for="max-tokens">Prompt token budget</label>
       <input id="max-tokens" type="number" min="2000" max="60000" step="1000" />
-    </label>
+    </div>
+
     <div class="actions">
-      <button id="save" class="primary">Save</button>
-      <a id="open-options" href="#" class="link">Full options page</a>
+      <button id="save" class="btn btn-primary">Save</button>
+      <a id="open-options" href="#" class="btn btn-ghost">All options</a>
     </div>
     <p id="settings-status" class="status"></p>
+
     <p class="fineprint">
-      Keys are stored in <code>chrome.storage.local</code> on this machine only and are sent
-      solely to the provider you pick. Captures are redacted before they leave the browser:
-      no response bodies, cookies or auth headers.
+      Keys live in <code>chrome.storage.local</code> on this machine only, and go
+      solely to the provider you pick. Captures are redacted before they leave the
+      browser — no response bodies, cookies or auth headers.
     </p>
   </section>
 

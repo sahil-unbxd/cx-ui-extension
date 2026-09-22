@@ -19,84 +19,6 @@ import { captureSiteConfig } from './site-config.js';
 import { runSelfDebug, runAutosuggestSelfDebug } from './self-debug.js';
 
 /* --------------------------------------------------------------------- */
-/* Proxy / VPN / access                                                    */
-/* --------------------------------------------------------------------- */
-
-const NETWORK_ERROR_SIGNATURES = [
-  { match: /ERR_NAME_NOT_RESOLVED|ERR_DNS/i, signal: 'dns_failure', note: 'DNS resolution failed — typical of split-tunnel VPN or an internal-only hostname.' },
-  { match: /ERR_CONNECTION_TIMED_OUT|ERR_TIMED_OUT|ERR_CONNECTION_RESET/i, signal: 'timeout', note: 'Connection timed out or was reset — corporate proxy or firewall dropping the route.' },
-  { match: /ERR_CERT|ERR_SSL/i, signal: 'tls_interception', note: 'Certificate/TLS error — a TLS-intercepting proxy without its root CA trusted.' },
-  { match: /ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_ADMINISTRATOR/i, signal: 'client_blocked', note: 'Blocked locally by an extension or enterprise policy.' },
-  { match: /ERR_PROXY|ERR_TUNNEL_CONNECTION_FAILED/i, signal: 'proxy_failure', note: 'Proxy tunnel failed outright.' },
-  { match: /ERR_EMPTY_RESPONSE|ERR_CONNECTION_CLOSED/i, signal: 'connection_closed', note: 'Server or middlebox closed the connection without responding.' }
-];
-
-/** Body-less markers that a geo/WAF block returned an HTML page with 2xx/4xx. */
-const GEO_BLOCK_STATUS = [403, 451, 429];
-
-function classifyNetwork(requests) {
-  const signals = new Set();
-  const notes = [];
-  for (const r of requests) {
-    if (r.corsError) {
-      signals.add('cors');
-      notes.push(`CORS ${r.corsError} on ${hostOf(r.url)}`);
-    }
-    if (r.blockedReason) {
-      signals.add('blocked');
-      notes.push(`blocked (${r.blockedReason}) on ${hostOf(r.url)}`);
-    }
-    if (r.errorText) {
-      for (const sig of NETWORK_ERROR_SIGNATURES) {
-        if (sig.match.test(r.errorText)) {
-          signals.add(sig.signal);
-          notes.push(`${r.errorText} on ${hostOf(r.url)} — ${sig.note}`);
-        }
-      }
-    }
-    if (GEO_BLOCK_STATUS.includes(r.status)) {
-      signals.add('http_block');
-      const server = (r.responseHeaders && (r.responseHeaders.server || r.responseHeaders['cf-ray'])) || '';
-      notes.push(`HTTP ${r.status} from ${hostOf(r.url)}${server ? ` (edge: ${truncate(server, 40)})` : ''}`);
-    }
-    if (r.status === 0 && !r.failed) signals.add('opaque_response');
-  }
-  return { signals: [...signals], notes: dedupe(notes).slice(0, 25) };
-}
-
-/** Is the failure isolated to Unbxd's own infrastructure, or is the whole page
- *  unreachable? This is the single most useful split for this issue type: an
- *  engineer's VPN/proxy usually breaks everything, while a scoped block
- *  (CORS misconfig, WAF rule) usually breaks only the Unbxd API/asset calls. */
-function unbxdFailureScope(problems) {
-  if (!problems.length) return 'none';
-  const unbxdFailing = problems.filter((r) => r.isUnbxd);
-  if (unbxdFailing.length === 0) return 'unbxd_unaffected';
-  if (unbxdFailing.length === problems.length) return 'unbxd_only';
-  return 'mixed';
-}
-
-async function captureProxy(session, recorder) {
-  const problems = recorder.problems().map((r) => ({ ...r, isUnbxd: isUnbxdHost(r.rawUrl) }));
-  const classification = classifyNetwork(problems);
-  const env = await session.evaluate(`(() => ({
-    origin: location.origin,
-    onLine: navigator.onLine,
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    languages: navigator.languages,
-    protocol: location.protocol
-  }))()`);
-
-  return {
-    environment: env,
-    classification,
-    unbxdFailureScope: unbxdFailureScope(problems),
-    failedRequests: problems.slice(0, 20).map(compactRequest),
-    distinctFailingHosts: dedupe(problems.map((r) => hostOf(r.url))).slice(0, 15)
-  };
-}
-
-/* --------------------------------------------------------------------- */
 /* Autosuggest alignment                                                   */
 /* --------------------------------------------------------------------- */
 
@@ -565,7 +487,6 @@ async function captureAutosuggestData(session, recorder, options = {}) {
 /* --------------------------------------------------------------------- */
 
 const STRATEGIES = {
-  proxy_access: captureProxy,
   autosuggest_alignment: captureAutosuggest,
   autosuggest_data: captureAutosuggestData,
   srp_ui: captureSrp,
@@ -599,19 +520,15 @@ function compactRequest(r) {
     corsError: r.corsError,
     blockedReason: r.blockedReason,
     durationMs: r.durationMs,
-    isUnbxd: r.isUnbxd,
+    // Computed here rather than expected on the record: it tells the model
+    // whether a failing request was Unbxd's own host or the customer's, which
+    // is the first split when failedRequests is non-empty.
+    isUnbxd: isUnbxdHost(r.rawUrl),
     requestHeaders: r.requestHeaders,
     responseHeaders: r.responseHeaders
   };
 }
 
-function hostOf(url) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return String(url).slice(0, 60);
-  }
-}
 
 function attrPairs(attributes = []) {
   const out = {};
@@ -624,9 +541,6 @@ function attrPairs(attributes = []) {
   return out;
 }
 
-function dedupe(list) {
-  return [...new Set(list)];
-}
 
 function round(n) {
   return typeof n === 'number' ? Math.round(n * 10) / 10 : n;

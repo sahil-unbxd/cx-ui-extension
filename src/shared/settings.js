@@ -33,7 +33,7 @@ export const DEFAULT_SETTINGS = {
   // Auto-stop: for issue types with a deterministic self-debug procedure
   // (results pages, autosuggest data), stop and analyse automatically once
   // the evidence is conclusive — no manual "Stop & analyse" click needed.
-  // Has no effect on issue types without one (proxy/access, alignment).
+  // Has no effect on issue types without one (autosuggest alignment).
   autoStop: true
 };
 

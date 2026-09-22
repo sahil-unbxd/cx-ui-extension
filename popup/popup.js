@@ -34,6 +34,14 @@ function setStatus(text, kind = '') {
   el.className = `status ${kind}`.trim();
 }
 
+/** The header pill. `live` drives the pulsing dot, so it must mean "the
+ *  debugger is actually attached" — not merely "something is happening". */
+function setConnState(text, live = false) {
+  const el = $('conn-state');
+  el.textContent = text;
+  el.classList.toggle('is-live', live);
+}
+
 /* ---------- debug tab ---------- */
 function renderIssueTypes(selected) {
   const sel = $('issue-type');
@@ -84,6 +92,9 @@ function setRecording(on, startedAt, autoStopArmed = false) {
     );
     tick();
     state.ticker = setInterval(tick, 1000);
+    setConnState('Recording', true);
+  } else {
+    setConnState('Idle');
   }
 }
 
@@ -115,6 +126,7 @@ $('stop').addEventListener('click', async () => {
   const stop = $('stop');
   stop.disabled = true;
   clearInterval(state.ticker);
+  setConnState('Analysing', true);
   setStatus($('agent-mode').checked
     ? 'Capturing context, then investigating with tools…'
     : 'Capturing context and asking the model…');
@@ -131,9 +143,11 @@ $('stop').addEventListener('click', async () => {
     });
     setRecording(false);
     renderResult(record);
+    setConnState('Done');
     setStatus('');
   } catch (err) {
     setRecording(false);
+    setConnState('Failed');
     setStatus(String(err.message), 'error');
   } finally {
     stop.disabled = false;
@@ -159,11 +173,13 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'capture.autostopped' && state.recording) {
     setRecording(false);
     renderResult(msg.record);
+    setConnState('Done');
     setStatus('Stopped automatically — the evidence was conclusive.');
     return;
   }
   if (msg.type === 'capture.autostop-error' && state.recording) {
     setRecording(false);
+    setConnState('Failed');
     setStatus(`Auto-stopped, but analysis failed: ${msg.error}`, 'error');
   }
 });
@@ -241,12 +257,62 @@ function renderVerdicts(context) {
   box.hidden = !box.childElementCount;
 }
 
+/** Renders the model's markdown answer as real elements.
+ *
+ *  Built node-by-node with textContent — never innerHTML. The answer is model
+ *  output rendered inside an extension page, so treating it as markup would be
+ *  an injection vector. Only the two things the output contract actually
+ *  produces are handled: **bold** (used for the section headings) and "- "
+ *  bullets. Anything else renders as plain text, which is the safe default.
+ */
+function renderMarkdown(el, text) {
+  el.textContent = '';
+  const appendInline = (parent, line) => {
+    // Split on ** pairs; odd indexes are the bolded runs.
+    line.split('**').forEach((part, i) => {
+      if (!part) return;
+      if (i % 2 === 1) {
+        const strong = document.createElement('strong');
+        strong.textContent = part;
+        parent.append(strong);
+      } else {
+        parent.append(document.createTextNode(part));
+      }
+    });
+  };
+
+  for (const rawLine of String(text).split('\n')) {
+    const line = rawLine.trimEnd();
+    if (!line) {
+      el.append(document.createElement('br'));
+      continue;
+    }
+    const row = document.createElement('div');
+    if (/^\s*[-*]\s+/.test(line)) {
+      row.className = 'md-li';
+      appendInline(row, line.replace(/^\s*[-*]\s+/, ''));
+    } else if (/^\*\*[^*]+\*\*:?$/.test(line)) {
+      row.className = 'md-h';
+      appendInline(row, line);
+    } else {
+      appendInline(row, line);
+    }
+    el.append(row);
+  }
+}
+
+/** Raw text for the clipboard — the rendered DOM above drops the markdown
+ *  syntax, and a ticket wants the markdown. */
+const lastRaw = { answer: '', fixPrompt: '' };
+
 function renderResult(record) {
   $('result').hidden = false;
   renderVerdicts(record.context);
   renderTrace(record.agent);
   const { body, fixPrompt } = splitFixPrompt(record.answer || '');
-  $('answer').textContent = body || '(empty response)';
+  lastRaw.answer = body;
+  lastRaw.fixPrompt = fixPrompt;
+  renderMarkdown($('answer'), body || '(empty response)');
   $('fix-prompt').textContent = fixPrompt;
   $('fix-prompt-box').hidden = !fixPrompt;
   $('sent-prompt').textContent = record.prompt;
@@ -269,8 +335,8 @@ function wireCopy(buttonId, getText) {
 
 // "Copy" gives the ticket-ready analysis; "Copy" on the fix prompt gives just
 // the agent instructions, which is what gets pasted somewhere else entirely.
-wireCopy('copy', () => $('answer').textContent);
-wireCopy('copy-fix', () => $('fix-prompt').textContent);
+wireCopy('copy', () => lastRaw.answer || $('answer').textContent);
+wireCopy('copy-fix', () => lastRaw.fixPrompt || $('fix-prompt').textContent);
 
 /* ---------- settings tab ---------- */
 function renderProviderOptions(settings) {

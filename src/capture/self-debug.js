@@ -574,7 +574,7 @@ export async function runAutosuggestSelfDebug(session, input) {
           ? PASS
           : FAIL,
     !responseUsable
-      ? 'Response was not JSON — escalate to the access/proxy playbook rather than assuming a config problem.'
+      ? 'Response was not JSON — usually an HTML error or bot-challenge page from a CDN/WAF. Treat it as a network/access problem and quote the status plus any edge headers, rather than assuming a config problem.'
       : returnedCount > 0
         ? `Response contains ${returnedCount} popular product(s).`
         : `Requested ${requestedCount ?? '?'} popular product(s) but the response's popularProducts section is empty or absent. Prime suspect: popularProducts.filter ("${(responseSummary && responseSummary.requestedPopularProductsFilter) ?? 'none'}") excludes every product for this catalogue/locale/market — or an indexing gap on the Unbxd platform side. This is a config or catalogue issue, not a widget bug.`,

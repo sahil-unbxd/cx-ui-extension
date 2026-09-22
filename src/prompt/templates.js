@@ -45,13 +45,6 @@ const SELF_DEBUG_PREFIX = `Start from context.selfDebug — the extension alread
 const SDK_CHECK_PREFIX = `Check context.sdkAssets first. If its verdict is "load_failed" or an expected asset (search.js/autosuggest.js/their CSS) is missing, that is very likely the actual root cause — say so before reasoning about the issue-specific symptom below, since a widget whose bundle never loaded can't have a "normal" version of this bug. `;
 
 export const TEMPLATES = {
-  proxy_access: {
-    system: `You are a senior Unbxd CX support engineer triaging a suspected network access problem (proxy, VPN, firewall, geo-block or CORS) on a customer's site. You reason only from captured Chrome DevTools Protocol network data.`,
-    contextLabel: 'Captured network context (failed/blocked requests tagged isUnbxd, error signatures, unbxdFailureScope, browser environment, sdkAssets)',
-    focus: SDK_CHECK_PREFIX + `Distinguish between: (a) the engineer's own proxy/VPN/network blocking the request, (b) the customer's CDN/WAF blocking by geography, rate or bot score, (c) a genuine CORS misconfiguration on the Unbxd API side, and (d) an ordinary application error that merely looks like a block. Use unbxdFailureScope directly: "unbxd_only" points at (c) or a scoped block; "mixed" or everything failing points at (a) or (b). Every failed request is tagged isUnbxd — cite it as evidence.`,
-    output: SHARED_OUTPUT_CONTRACT
-  },
-
   autosuggest_alignment: {
     system: `You are a senior Unbxd CX support engineer diagnosing the on-screen position of an autosuggest dropdown relative to its anchor search input. You reason from CDP box models and computed styles — not from a screenshot.`,
     contextLabel: 'Captured layout context (box models, computed styles, clipping/stacking ancestors, viewport, sdkAssets)',

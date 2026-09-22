@@ -55,7 +55,7 @@ export function unbxdAssetKind(rawUrl) {
 const UNBXD_HOST = /(^|\.)unbxd\.io$|(^|\.)unbxdapi\.com$/i;
 
 /** True for any Unbxd-owned host (API, assets, or otherwise) — used by the
- *  proxy/access strategy to separate "just Unbxd is unreachable" from
+ *  capture strategies to tell "just Unbxd is unreachable" apart from
  *  "everything on this page is unreachable". */
 export function isUnbxdHost(rawUrl) {
   try {

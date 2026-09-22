@@ -2,11 +2,10 @@
  * Watches a live capture for the moment there is enough evidence to stop
  * without the engineer clicking "Stop & analyse" — for the issue types that
  * have a deterministic self-debug procedure: SRP/PLP results pages and
- * autosuggest data. Proxy/access and alignment issues have no equivalent
- * "we now have the full picture" signal (a network failure or a layout
- * mismatch doesn't resolve to a terminal check the way an API→DOM chain
- * does), so this watcher is only created for `selfDebugKind` results_page /
- * autosuggest_data — see service-worker.js.
+ * autosuggest data. The alignment issue type has no equivalent "we now have
+ * the full picture" signal (a layout mismatch doesn't resolve to a terminal
+ * check the way an API→DOM chain does), so this watcher is only created for
+ * `selfDebugKind` results_page / autosuggest_data — see service-worker.js.
  *
  * Design: event-driven and debounced, not a busy poll. Each time the
  * relevant Unbxd API call (search/category, or autosuggest) finishes

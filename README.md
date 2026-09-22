@@ -18,8 +18,8 @@ cause plus a recommended fix you can paste into a ticket.
 3. **Start capture** → reproduce the issue on the page (search, type in autosuggest,
    click a facet). For SRP, PLP and Autosuggest Data issues, the extension stops
    and analyses **on its own** once it has conclusive evidence — no need to click
-   anything (toggle this off per-run, or in Settings, if you'd rather stop manually).
-   Other issue types still need **Stop & analyse**.
+   anything (toggle this off in Settings if you'd rather stop manually). The
+   Autosuggest Alignment type still needs **Stop & analyse**.
 4. Read the analysis, hit **Copy**, paste into the ticket. For SRP/PLP/Autosuggest
    Data issues the answer also ends with a **Fix prompt** — its own copy button —
    written for an AI coding agent with the customer's integration repo open.
@@ -38,7 +38,6 @@ auth headers. See the Options page and `AGENTS.md` for the full boundary.
 
 | Type | Captures |
 |---|---|
-| Proxy / VPN / access | failed + blocked requests, CORS/DNS/TLS/geo signatures, browser environment |
 | Autosuggest alignment | box models and computed styles of the dropdown and its anchor input, clipping/stacking ancestors |
 | Autosuggest data | the `autosuggest` API request/response (popular products, keyword suggestions, top queries), whether they rendered, plus a review of `{siteKey}_autosuggest.js`/`.css` |
 | SRP UI | the `search` API request params and response counts/shape, what the DOM rendered, plus a review of the site's `{siteKey}_search.js` / `_search.css` config bundle |

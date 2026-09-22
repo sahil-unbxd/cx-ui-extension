@@ -40,10 +40,10 @@ result is conclusive (any check FAILs, or the terminal check —
 pass/fail rather than a skip) it calls the *same* `stopAndAnalyse` a manual
 click would, with no popup interaction required — the engineer's description
 is snapshotted at `capture.start` time for exactly this reason, since the
-popup is normally closed while they're reproducing the issue. Proxy/access and
-alignment issue types have no equivalent "we now have the full picture"
-signal, so no watcher is created for them; auto-stop is a no-op there
-regardless of the setting. See the constraint below before touching this path.
+popup is normally closed while they're reproducing the issue. The alignment
+issue type has no equivalent "we now have the full picture" signal, so no
+watcher is created for it; auto-stop is a no-op there regardless of the
+setting. See the constraint below before touching this path.
 
 ## Where things live
 

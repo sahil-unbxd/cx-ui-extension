@@ -5,60 +5,116 @@
   <title>CX Debug Assistant — Options</title>
   <link rel="stylesheet" href="../popup/popup.css" />
   <style>
-    body { width: auto; max-width: 640px; margin: 24px auto; padding: 0 16px; }
-    h1 { font-size: 18px; }
-    h2 { font-size: 14px; margin-top: 24px; }
+    /* The options page shares the popup's design tokens but is a full page,
+       so it overrides only the popup's fixed width and adds page chrome. */
+    body { width: auto; max-width: 620px; margin: 0 auto; padding: 32px 20px 56px; background: var(--bg-sunken); }
+    .page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .page-head .brand-mark { width: 34px; height: 34px; border-radius: 10px; }
+    .page-head .brand-mark svg { width: 19px; height: 19px; }
+    h1 { font-size: 19px; font-weight: 650; letter-spacing: -0.015em; margin: 0; }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px; margin-top: 18px; box-shadow: var(--shadow-sm); }
+    .section h2 { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 14px; }
+    .section .field:last-of-type { margin-bottom: 0; }
+    .section .check:first-of-type { border-top: 1px solid var(--border); margin-top: 4px; }
+    .intro { margin: 0 0 4px; font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
+    ul.fineprint { margin: 0; padding-left: 18px; border: none; }
+    /* The popup's primary button stretches to fill a narrow popup; on a full
+       page the buttons should keep their natural width. */
+    .section .actions .btn { flex: none; }
+    .section .actions .status { margin: 0; }
+    ul.fineprint li { margin-bottom: 5px; }
   </style>
 </head>
 <body>
-  <h1>CX Debug Assistant</h1>
-  <p class="fineprint">
-    Bring-your-own-key. There is no Unbxd backend in this version: analysis requests go
-    straight from your browser to the provider you choose, with your key.
+  <div class="page-head">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 L21 21" />
+      </svg>
+    </span>
+    <h1>CX Debug Assistant</h1>
+  </div>
+  <p class="intro">
+    Bring-your-own-key. There is no Unbxd backend in this version — analysis requests go
+    straight from your browser to the provider you choose, using your key.
   </p>
 
-  <h2>Provider</h2>
-  <label class="field"><span>Provider</span><select id="provider"></select></label>
-  <label class="field"><span>Model</span><select id="model"></select></label>
-
-  <h2>API keys</h2>
-  <label class="field">
-    <span>Anthropic key <small><a class="link" href="https://console.anthropic.com/settings/keys" target="_blank">get one</a></small></span>
-    <input id="key-claude" type="password" placeholder="sk-ant-..." autocomplete="off" />
-  </label>
-  <label class="field">
-    <span>OpenAI key <small><a class="link" href="https://platform.openai.com/api-keys" target="_blank">get one</a></small></span>
-    <input id="key-openai" type="password" placeholder="sk-..." autocomplete="off" />
-  </label>
-
-  <h2>Capture &amp; prompt</h2>
-  <label class="field">
-    <span>Prompt token budget <small>captured context is shrunk to fit</small></span>
-    <input id="max-tokens" type="number" min="2000" max="60000" step="1000" />
-  </label>
-  <label class="check">
-    <input type="checkbox" id="agent-mode" />
-    <span>Agent mode <small>— the model investigates with tools over the live page (keeps the debugger attached for the duration, costs more tokens, usually a better answer)</small></span>
-  </label>
-  <label class="check">
-    <input type="checkbox" id="auto-stop" />
-    <span>Auto-stop <small>— for SRP/PLP and Autosuggest Data issues, stop and analyse automatically once the evidence is conclusive, no manual "Stop & analyse" needed. Has no effect on issue types without a self-debug procedure.</small></span>
-  </label>
-
-  <div class="actions">
-    <button id="save" class="primary">Save</button>
-    <button id="clear">Clear stored keys &amp; last analysis</button>
-    <span id="status" class="status"></span>
+  <div class="section">
+    <h2>Provider</h2>
+    <div class="field">
+      <label class="field-label" for="provider">Provider</label>
+      <div class="select-wrap">
+        <select id="provider"></select>
+        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="model">Model</label>
+      <div class="select-wrap">
+        <select id="model"></select>
+        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </div>
+    </div>
   </div>
 
-  <h2>What gets sent</h2>
-  <ul class="fineprint">
-    <li>Request/response <em>metadata</em>: URL with secret query params redacted, method, status, timing, and a safe subset of headers.</li>
-    <li>Console errors and warnings, truncated.</li>
-    <li>For alignment issues: box models and a fixed list of computed style properties.</li>
-    <li>For SRP issues: the search request's params plus response counts and field <em>names</em> — never the catalogue data.</li>
-    <li>Never: response bodies, cookies, <code>Authorization</code> / <code>x-api-key</code> headers, or anything from tabs other than the one you captured.</li>
-  </ul>
+  <div class="section">
+    <h2>API keys</h2>
+    <div class="field">
+      <label class="field-label" for="key-claude">
+        Anthropic key <small><a class="link" href="https://console.anthropic.com/settings/keys" target="_blank">get one</a></small>
+      </label>
+      <input id="key-claude" type="password" placeholder="sk-ant-…" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label class="field-label" for="key-openai">
+        OpenAI key <small><a class="link" href="https://platform.openai.com/api-keys" target="_blank">get one</a></small>
+      </label>
+      <input id="key-openai" type="password" placeholder="sk-…" autocomplete="off" />
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Capture &amp; prompt</h2>
+    <div class="field">
+      <label class="field-label" for="max-tokens">
+        Prompt token budget <small>captured context is shrunk to fit</small>
+      </label>
+      <input id="max-tokens" type="number" min="2000" max="60000" step="1000" />
+    </div>
+
+    <label class="check">
+      <input type="checkbox" id="agent-mode" />
+      <span class="check-text">
+        <span class="check-title">Agent mode</span>
+        <span class="check-sub">The model investigates with tools over the live page — keeps the debugger attached for the duration, costs more tokens, usually a better answer.</span>
+      </span>
+    </label>
+    <label class="check">
+      <input type="checkbox" id="auto-stop" />
+      <span class="check-text">
+        <span class="check-title">Auto-stop</span>
+        <span class="check-sub">For SRP, PLP and Autosuggest Data issues, stop and analyse automatically once the evidence is conclusive. No effect on issue types without a self-debug procedure.</span>
+      </span>
+    </label>
+
+    <div class="actions">
+      <button id="save" class="btn btn-primary">Save</button>
+      <button id="clear" class="btn btn-ghost">Clear keys &amp; last analysis</button>
+      <span id="status" class="status"></span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>What gets sent</h2>
+    <ul class="fineprint">
+      <li>Request/response <em>metadata</em>: URL with secret query params redacted, method, status, timing, and a safe subset of headers.</li>
+      <li>Console errors and warnings, truncated.</li>
+      <li>For alignment issues: box models and a fixed list of computed style properties.</li>
+      <li>For SRP/PLP and autosuggest-data issues: request params plus response counts and field <em>names</em> — never the catalogue data.</li>
+      <li>Never: response bodies, cookies, <code>Authorization</code> / <code>x-api-key</code> headers, or anything from tabs other than the one you captured.</li>
+    </ul>
+  </div>
+
   <script type="module" src="options.js"></script>
 </body>
 </html>

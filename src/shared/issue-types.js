@@ -15,19 +15,6 @@
  * src/background/service-worker.js.
  */
 export const ISSUE_TYPES = {
-  proxy_access: {
-    id: 'proxy_access',
-    label: 'Proxy / VPN / access issue',
-    hint: 'Requests blocked, CORS errors, timeouts, geo-restricted responses.',
-    skillsSection: 'Proxy / VPN / Access Issues',
-    capture: {
-      network: true,
-      console: true,
-      // Everything the model needs lives in the network layer; no DOM geometry.
-      domGeometry: false,
-      searchApi: false
-    }
-  },
   autosuggest_alignment: {
     id: 'autosuggest_alignment',
     label: 'Autosuggest alignment issue',

@@ -188,8 +188,10 @@ say so rather than trying to answer it from this context.
    excludes every product for the current catalogue/market/locale (a common
    pattern: a market filter like `available_markets:AU` evaluated on a site
    visited from the wrong region, or simply misconfigured for this catalogue).
-   `responseSummary.parsed: false` escalates to the access/proxy playbook
-   instead.
+   `responseSummary.parsed: false` means the response wasn't JSON at all —
+   usually an HTML error or bot-challenge page from a CDN/WAF. Report that as a
+   network/access problem (quote the status and any edge headers such as
+   `cf-ray` or `server`), not as a config problem.
 6. **`popular_products_rendered`** — only reached once the API is confirmed to
    return products: does `rendered.popularProductNodeCounts` show anything
    inside the dropdown? A `FAIL` here is a template/container-selector problem
@@ -283,31 +285,6 @@ nothing is visible, this is where to look next.
 
 ### Fix pattern to suggest
 Name the config key path and the exact value change (`pagination.pageSizeParam.addToUrl: true → false`), say the change belongs in the customer's `{siteKey}_search.js` (the CX engineer edits and redeploys the bundle; it is not an Unbxd console setting unless the key is catalogue-side), and note any behaviour the change alters. Then write the **Fix prompt** section addressed to a coding agent with that same file, key path and target value spelled out.
-
----
-
-## Proxy / VPN / Access Issues
-
-### Symptoms to recognise
-- Requests to the Unbxd API host fail while the customer's own assets load fine (or the reverse).
-- Browser console shows `ERR_NAME_NOT_RESOLVED`, `ERR_CONNECTION_TIMED_OUT`, `ERR_TUNNEL_CONNECTION_FAILED`, `ERR_CERT_AUTHORITY_INVALID`, or `net::ERR_BLOCKED_BY_CLIENT`.
-- "No 'Access-Control-Allow-Origin' header" errors, or a CORS error code on a request that works in curl.
-- HTTP 403 / 451 / 429 with an HTML body from an edge (Cloudflare, Akamai, AWS WAF) rather than JSON from the API.
-- The issue follows the engineer, not the site: it reproduces for one person on VPN and nobody else.
-
-### What context to capture
-Network metadata only (`capture.network`, `capture.console`): failed and >=400 requests with their `errorText`, `corsErrorStatus`, `blockedReason`, status, timing, remote IP, the CORS / edge / cache headers, and an `isUnbxd` tag on each (any `*.unbxd.io` / `*.unbxdapi.com` host). Plus `unbxdFailureScope` (`unbxd_only` / `mixed` / `unbxd_unaffected` / `none`) and the browser environment (`origin`, `navigator.onLine`, time zone, languages) because time zone and language are the cheapest available proxy for apparent geography. No DOM, no response bodies.
-
-### Common root causes, most likely first
-1. **Engineer-side proxy or VPN** — corporate proxy or split-tunnel VPN dropping the API host. Signature: `unbxdFailureScope: mixed` or the failure isn't isolated to Unbxd at all — non-Unbxd hosts fail too; DNS failure, timeout or TLS-interception error; not reproducible off-VPN.
-2. **Edge geo/bot block on the customer's CDN** — 403/451/429 with an edge header (`cf-ray`, `server: AkamaiGHost`, `x-cache`) and an HTML body. Often correlates with an unusual exit-node country.
-3. **Genuine CORS misconfiguration on the Unbxd API** — signature: `unbxdFailureScope: unbxd_only` (only `search.unbxd.io`/`libraries.unbxdapi.com` calls fail, the rest of the site loads fine), preflight `OPTIONS` returns 4xx, or the response lacks `access-control-allow-origin` for this exact origin. Reproducible for everyone on that origin, not just this engineer.
-4. **Rate limiting** — 429 plus `retry-after`, clustered in time.
-5. **TLS interception** — cert errors on every HTTPS host; the proxy's root CA is not in the OS trust store.
-6. **Not a network problem at all** — request succeeded with 200 and the failure is downstream. Say so rather than forcing a proxy story. If `sdkAssets.verdict` is `load_failed`, prefer that over inventing a proxy story — it is the more specific signal.
-
-### Fix pattern to suggest
-Name the boundary first: engineer's machine, customer's edge, or API config. Then: retry off VPN / on a different network to split (1) from (2)-(4); compare the same request via curl from outside the corporate network; if CORS, give the exact header the origin needs and say it is a change on the API/CDN side, not in the storefront JS; if edge/geo, ask the customer's team to allowlist the Unbxd API path or the tester's egress range. Never recommend disabling browser security flags.
 
 ---
 
@@ -440,7 +417,7 @@ Compare `responseSummary.returnedProductCount` with `renderedPage.domProductNode
 1. **Query/params wrong** — a stray filter, an encoded `q`, wrong `start`/`rows` arithmetic, or a variant/child filter excluding everything. Zero results with a plausible-looking query. For `category`, check the `p=category_handle_uFilter:"..."` value is the handle the page actually intends.
 2. **Wrong catalogue, site key or environment** — the `{apiKey}/{siteKey}` path segments point at staging/another catalogue/sandbox, or `searchRequest.url`'s host isn't `search.unbxd.io` at all (see the SDK-asset host-mismatch cause above — the same wrong-environment pattern shows up here); field names in the response differ from what the template expects.
 3. **Template/field-mapping mismatch** — API returns products, DOM shows blanks or nothing; `productFieldNames` does not contain the fields the storefront template reads.
-4. **Response not JSON** — an HTML challenge or error page came back; `parsed: false`. Escalate to the access playbook.
+4. **Response not JSON** — an HTML challenge or error page came back; `parsed: false`. Treat it as a network/access problem: quote the status code and any edge headers (`cf-ray`, `server`, `x-cache`) as evidence, and say whether it looks like a CDN/WAF block rather than an SDK bug.
 5. **Race / stale render** — multiple `search`/`category` calls in the window (`otherSearchCalls`) and the UI shows an earlier one's data; typical after fast facet clicks.
 6. **Pagination/offset bug** — `start` in the request does not match the page the UI believes it is on.
 7. **Zero results are correct** — the catalogue genuinely has no match. Check `didYouMean`/`redirect` before blaming the integration.
