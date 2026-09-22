@@ -20,6 +20,9 @@ One or two sentences. Name the specific request, element or field from the captu
 **Confidence**
 high / medium / low — plus the single piece of evidence that would most change your answer if captured next.
 
+**Fix prompt**
+A single self-contained prompt the engineer can paste into an AI coding agent that has the customer's integration repo open. Address that agent, not the engineer. It must name: the file to edit (the site's \`{siteKey}_search.js\` or \`_search.css\` — use the real site key from the context), the exact config key path or CSS selector, the current value and the target value, and one sentence of expected behaviour after the change. If the root cause is not a code/config change (VPN, catalogue data, platform outage), write "N/A — not a code fix" and say in one line what to do instead.
+
 Rules:
 - The context is redacted on purpose: no response bodies, cookies or auth headers. If something you need is missing, say exactly what to capture next instead of guessing.
 - Do not speculate beyond the evidence. If the capture window recorded nothing relevant, say so first.
@@ -28,6 +31,12 @@ Rules:
 // Prefixed to every template's focus: the captured context always includes
 // this, regardless of issue type (see src/capture/sdk-assets.js). Checking it
 // first can short-circuit an otherwise-plausible but wrong issue-specific story.
+// Appended to the issue types that review the customer's config bundle. The
+// distinction it draws matters: liveConfig is the resolved runtime object,
+// bundleMarkers are regexes over a minified file that also contains the SDK's
+// own defaults — a model that confuses the two invents confident nonsense.
+const CONFIG_REVIEW_NOTE = `When you cite the config, cite siteConfig.liveConfig — it is the resolved runtime config and is authoritative. siteConfig.bundleReview[].bundleMarkers are regex counts over a minified bundle that also contains the SDK library and its demo defaults, so use them only for environment checks (builtForSiteKey), duplicate instantiation counts and file facts; never quote a marker count as if it were the customer's setting. The response summary contains field names and counts only — reason about shape, never about specific product values.`;
+
 const SDK_CHECK_PREFIX = `Check context.sdkAssets first. If its verdict is "load_failed" or an expected asset (search.js/autosuggest.js/their CSS) is missing, that is very likely the actual root cause — say so before reasoning about the issue-specific symptom below, since a widget whose bundle never loaded can't have a "normal" version of this bug. `;
 
 export const TEMPLATES = {
@@ -46,9 +55,16 @@ export const TEMPLATES = {
   },
 
   srp_ui: {
-    system: `You are a senior Unbxd CX support engineer triaging a search results page rendering complaint. Your first job is to decide whether the Unbxd API (search or category) returned the wrong data or the UI rendered correct data wrongly.`,
-    contextLabel: 'Captured search.unbxd.io "search"/"category" request context (URL, apiType, params, response counts and field shape — never the catalogue data itself) plus what the DOM actually rendered, and sdkAssets',
-    focus: SDK_CHECK_PREFIX + `Otherwise, make the API-versus-UI call explicitly and early, using the numbers: responseSummary.numberOfProducts and returnedProductCount versus renderedPage.domProductNodeCounts. If the API returned products but the DOM shows none, it is a rendering/templating problem. If the API returned zero, look at the request params (q for search / p for category, filters, pagination start, the apiKey/siteKey path segments) for why. Also check for a redirect, didYouMean or an error field in the response, and whether the response parsed as JSON at all. searchRequest.apiType tells you whether this was a "search" or "category" call — the two have different param shapes, don't conflate them. Only search and category calls were captured; ignore any implication that other API traffic (autosuggest, analytics, recs) was considered. The response contains field names and counts only — reason about shape, never about specific product values.`,
+    system: `You are a senior Unbxd CX support engineer triaging a search results page rendering complaint. Your first job is to decide whether the Unbxd API (search or category) returned the wrong data or the UI rendered correct data wrongly. Your second is to point at the exact line of the customer's config bundle that causes it.`,
+    contextLabel: 'Captured search.unbxd.io "search"/"category" request context (URL, apiType, params, response counts and field shape — never the catalogue data itself), what the DOM actually rendered, the reviewed {siteKey}_search.js/.css config bundle, and sdkAssets',
+    focus: SDK_CHECK_PREFIX + `Otherwise, make the API-versus-UI call explicitly and early, using the numbers: responseSummary.numberOfProducts and returnedProductCount versus renderedPage.domProductNodeCounts. If the API returned products but the DOM shows none, it is a rendering/templating problem — go straight to siteConfig.liveConfig: check selectorChecks for any matchCount of 0 (a config element selector that matches nothing is the single most common cause of an empty grid), then products.attributesMap / productAttributes against responseSummary.productFieldNames for a field the template reads but the API doesn't return. If the API returned zero, look at the request params (q for search / p for category, filters, pagination start) and at siteConfig.consistency for a site-key mismatch between bundle, running config and request. Also check for a redirect, didYouMean or an error field, whether the response parsed as JSON at all, and apiCallCounts for double initialisation. ` + CONFIG_REVIEW_NOTE,
+    output: SHARED_OUTPUT_CONTRACT
+  },
+
+  plp_ui: {
+    system: `You are a senior Unbxd CX support engineer triaging a PLP (category / browse) page complaint on a customer's site. PLPs are driven by the "category" endpoint and by a different part of the config than search, and most PLP tickets turn out to be config, URL-state or page-type-detection problems rather than API problems.`,
+    contextLabel: 'Captured search.unbxd.io "category" (or fallback "search") request context, the page\'s URL/history state, what the DOM actually rendered, the reviewed {siteKey}_search.js/.css config bundle, and sdkAssets',
+    focus: SDK_CHECK_PREFIX + `Then work through the PLP-specific checks in this order. (1) Page type: siteConfig.liveConfig.options.productType and .state.productTypeOption should be CATEGORY on a category page — "SEARCH" here is why a PLP shows search results, and searchRequest.apiType confirms which endpoint actually fired. If no instance was found at all (liveConfig.instanceFound false), the SDK never initialised on this page type — check the page-detection condition against renderedPage.bodyClasses. (2) URL state: renderedPage.urlHasFilterParam with no matching filter in searchRequest.params means the filter was dropped after load (a double-fire of getCategoryPage over renderFromUrl); apiCallCounts above 1 is the corroborating signal. (3) Back-button loop: renderedPage.urlHasSdkPaginationParams true together with pagination.type FIXED_PAGINATION and url.pageSizeParam/pageNoParam addToUrl true is the known pushState loop — a grown historyLength supports it. (4) Only then the ordinary API-versus-UI comparison: responseSummary counts versus renderedPage.domProductNodeCounts, and selectorChecks for a matchCount of 0. ` + CONFIG_REVIEW_NOTE,
     output: SHARED_OUTPUT_CONTRACT
   }
 };

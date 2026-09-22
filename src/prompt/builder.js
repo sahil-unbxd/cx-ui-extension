@@ -10,15 +10,19 @@ import { fitJson, estimateTokens } from './budget.js';
 // every prompt, regardless of issue type, because it documents the shared
 // `sdkAssets` check (src/capture/sdk-assets.js) that also runs unconditionally.
 const SDK_VALIDATION_HEADING = 'SDK Asset Validation (All Issue Types)';
+// Injected only for issue types whose capture reviews the customer's config
+// bundle (capture.siteConfig) — it documents the `siteConfig` context block.
+const CONFIG_REVIEW_HEADING = 'Config Bundle Review (SRP and PLP)';
 
 export async function buildPrompt({ issueTypeId, description, context, pageUrl, maxTokens = 12000 }) {
   const type = getIssueType(issueTypeId);
   const template = getTemplate(type.id);
-  const [sdkValidation, typeSkills] = await Promise.all([
-    getSkillSection(SDK_VALIDATION_HEADING),
-    getSkillSection(type.skillsSection)
-  ]);
-  const skills = [sdkValidation, typeSkills].filter(Boolean).join('\n\n');
+  const headings = [SDK_VALIDATION_HEADING];
+  if (type.capture && type.capture.siteConfig) headings.push(CONFIG_REVIEW_HEADING);
+  headings.push(type.skillsSection);
+
+  const sections = await Promise.all(headings.map((h) => getSkillSection(h)));
+  const skills = sections.filter(Boolean).join('\n\n');
 
   const header = [
     `Issue type: ${type.label}`,

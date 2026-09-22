@@ -15,6 +15,7 @@ import { getIssueType } from '../shared/issue-types.js';
 import { redactUrl, redactedParams, shapeOf, truncate } from './redact.js';
 import { unbxdApiKind, isUnbxdHost } from '../shared/unbxd-endpoints.js';
 import { captureSdkAssets } from './sdk-assets.js';
+import { captureSiteConfig } from './site-config.js';
 
 /* --------------------------------------------------------------------- */
 /* Proxy / VPN / access                                                    */
@@ -247,24 +248,32 @@ async function ancestorContext(session, selector) {
 }
 
 /* --------------------------------------------------------------------- */
-/* SRP (search results page)                                               */
+/* SRP (search results page) and PLP (category / browse page)              */
 /* --------------------------------------------------------------------- */
 
 /**
- * Only the Unbxd search and category endpoints matter for an SRP capture
- * (https://search.unbxd.io/{apiKey}/{siteKey}/search|category?...). Autosuggest
- * calls are excluded here — that's the alignment issue type's territory, and
- * it deliberately doesn't capture API data at all. Every other request
- * (analytics beacons, recs widgets, ad pixels, third-party scripts, even other
- * Unbxd endpoints) is noise and must never be forwarded as "the" search call.
+ * Only the Unbxd search and category endpoints matter for a results-page
+ * capture (https://search.unbxd.io/{apiKey}/{siteKey}/search|category?...).
+ * Autosuggest calls are excluded here — that's the alignment issue type's
+ * territory, and it deliberately doesn't capture API data at all. Every other
+ * request (analytics beacons, recs widgets, ad pixels, third-party scripts,
+ * even other Unbxd endpoints) is noise and must never be forwarded as "the"
+ * search call.
  */
 function srpApiKind(r) {
   const kind = unbxdApiKind(r.rawUrl);
   return kind === 'search' || kind === 'category' ? kind : null;
 }
 
-async function captureSrp(session, recorder) {
-  const candidates = recorder.all().filter((r) => srpApiKind(r));
+/**
+ * Shared by SRP and PLP: both are "the API returned X, the DOM shows Y"
+ * problems over the same two endpoints. `prefer` decides which endpoint wins
+ * when a page fired both (a category page that also runs a search widget).
+ */
+async function captureResultsPage(session, recorder, { prefer, includeSiteConfig = true } = {}) {
+  const all = recorder.all().filter((r) => srpApiKind(r));
+  const preferred = prefer ? all.filter((r) => srpApiKind(r) === prefer) : [];
+  const candidates = preferred.length ? preferred : all;
   // The last one wins: it is the call that produced what the engineer is looking at.
   const primary = candidates[candidates.length - 1] || null;
 
@@ -276,15 +285,24 @@ async function captureSrp(session, recorder) {
 
   const rendered = await session.evaluate(`(() => {
     const count = (sel) => { try { return document.querySelectorAll(sel).length; } catch { return 0; } };
-    const productish = ['[class*="product" i]','[data-product-id]','[class*="tile" i]','li[class*="item" i]'];
+    const productish = ['[class*="product" i]','[data-product-id]','[class*="tile" i]','li[class*="item" i]','[class*="UNX" i]'];
     const counts = {};
     for (const sel of productish) counts[sel] = count(sel);
+    const params = {};
+    for (const [k, v] of new URLSearchParams(location.search)) params[k] = String(v).slice(0, 120);
     return {
       url: location.href.slice(0, 300),
       title: document.title.slice(0, 120),
       domProductNodeCounts: counts,
       visibleNoResultsText: /no results|0 results|nothing found/i.test(document.body.innerText.slice(0, 20000)),
-      bodyTextSample: document.body.innerText.replace(/\\s+/g,' ').slice(0, 400)
+      bodyTextSample: document.body.innerText.replace(/\\s+/g,' ').slice(0, 400),
+      // URL/history state: the SDK rewrites the URL, and a back-button loop
+      // shows up here as SDK pagination params plus a grown history stack.
+      urlParams: params,
+      urlHasSdkPaginationParams: ['rows','page','start','pageSize'].some((p) => p in params),
+      urlHasFilterParam: Object.keys(params).some((k) => /^filter$|uFilter|^p$/i.test(k)),
+      historyLength: history.length,
+      bodyClasses: (document.body.className || '').slice(0, 200)
     };
   })()`);
 
@@ -303,18 +321,27 @@ async function captureSrp(session, recorder) {
         }
       : null,
     searchRequestFound: Boolean(primary),
+    apiCallCounts: {
+      search: all.filter((r) => srpApiKind(r) === 'search').length,
+      category: all.filter((r) => srpApiKind(r) === 'category').length,
+      note: 'More than one call per page load points at double initialisation or a manual getResults()/getCategoryPage() on top of the automatic one.'
+    },
     otherSearchCalls: candidates
       .slice(0, -1)
       .map((r) => ({ url: r.url, apiType: srpApiKind(r), status: r.status }))
       .slice(-5),
     responseSummary: response,
     renderedPage: rendered,
+    siteConfig: includeSiteConfig ? await captureSiteConfig(session, recorder, { includeCss: true }) : undefined,
     failedRequests: recorder.problems().slice(0, 8).map(compactRequest),
     consoleErrors: [...recorder.consoleEntries, ...recorder.pageErrors]
       .filter((c) => c.level === 'error')
       .slice(-10)
   };
 }
+
+const captureSrp = (session, recorder) => captureResultsPage(session, recorder, { prefer: 'search' });
+const capturePlp = (session, recorder) => captureResultsPage(session, recorder, { prefer: 'category' });
 
 /**
  * Turn a search response body into counts + shape. The catalogue data itself
@@ -384,7 +411,8 @@ function safeAtob(b64) {
 const STRATEGIES = {
   proxy_access: captureProxy,
   autosuggest_alignment: captureAutosuggest,
-  srp_ui: captureSrp
+  srp_ui: captureSrp,
+  plp_ui: capturePlp
 };
 
 export async function runStrategy(issueTypeId, session, recorder, options) {

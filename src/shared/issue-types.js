@@ -49,7 +49,22 @@ export const ISSUE_TYPES = {
       network: true,
       console: true,
       domGeometry: false,
-      searchApi: true
+      searchApi: true,
+      // Reviews the customer's {siteKey}_search.js/.css config bundle.
+      siteConfig: true
+    }
+  },
+  plp_ui: {
+    id: 'plp_ui',
+    label: 'PLP / category page issue',
+    hint: 'Category page empty or showing search results, filters dropped from URL, back-button loop, pagination.',
+    skillsSection: 'PLP (Category / Browse Page) Issues',
+    capture: {
+      network: true,
+      console: true,
+      domGeometry: false,
+      searchApi: true,
+      siteConfig: true
     }
   }
 };

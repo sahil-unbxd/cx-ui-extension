@@ -116,9 +116,23 @@ $('stop').addEventListener('click', async () => {
   }
 });
 
+/** Splits the model's "**Fix prompt**" section out of the answer so it can be
+ *  copied on its own — it is addressed to a coding agent, not to the ticket. */
+function splitFixPrompt(answer = '') {
+  const match = answer.match(/\*\*Fix prompt\*\*\s*\n?([\s\S]*)$/i);
+  if (!match) return { body: answer, fixPrompt: '' };
+  return {
+    body: answer.slice(0, match.index).trimEnd(),
+    fixPrompt: match[1].trim()
+  };
+}
+
 function renderResult(record) {
   $('result').hidden = false;
-  $('answer').textContent = record.answer || '(empty response)';
+  const { body, fixPrompt } = splitFixPrompt(record.answer || '');
+  $('answer').textContent = body || '(empty response)';
+  $('fix-prompt').textContent = fixPrompt;
+  $('fix-prompt-box').hidden = !fixPrompt;
   $('sent-prompt').textContent = record.prompt;
   $('captured').textContent = JSON.stringify(record.context, null, 2);
   const usage = record.usage
@@ -128,11 +142,18 @@ function renderResult(record) {
   $('result-meta').textContent = `${record.model} · ${usage}`;
 }
 
-$('copy').addEventListener('click', async () => {
-  await navigator.clipboard.writeText($('answer').textContent);
-  $('copy').textContent = 'Copied';
-  setTimeout(() => ($('copy').textContent = 'Copy'), 1200);
-});
+function wireCopy(buttonId, getText) {
+  $(buttonId).addEventListener('click', async () => {
+    await navigator.clipboard.writeText(getText());
+    $(buttonId).textContent = 'Copied';
+    setTimeout(() => ($(buttonId).textContent = 'Copy'), 1200);
+  });
+}
+
+// "Copy" gives the ticket-ready analysis; "Copy" on the fix prompt gives just
+// the agent instructions, which is what gets pasted somewhere else entirely.
+wireCopy('copy', () => $('answer').textContent);
+wireCopy('copy-fix', () => $('fix-prompt').textContent);
 
 /* ---------- settings tab ---------- */
 function renderProviderOptions(settings) {

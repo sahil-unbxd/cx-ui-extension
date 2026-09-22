@@ -19,11 +19,13 @@ Section headings are matched case-insensitively but otherwise exactly. Renaming 
 heading without updating `skillsSection` silently drops the playbook from the
 prompt.
 
-The one section below that is **not** tied to an issue type is
-"SDK Asset Validation (All Issue Types)" — its heading is hardcoded in
-`src/prompt/builder.js` (`SDK_VALIDATION_HEADING`) and it is prepended to every
-prompt regardless of which issue type is selected. Rename it there too if you
-rename it here.
+Two sections below are **not** tied to a single issue type, and their headings
+are hardcoded in `src/prompt/builder.js`. Rename them there too if you rename
+them here:
+
+- **"SDK Asset Validation (All Issue Types)"** — prepended to every prompt.
+- **"Config Bundle Review (SRP and PLP)"** — added for any issue type whose
+  `capture.siteConfig` is true.
 
 ---
 
@@ -57,6 +59,72 @@ were observed loading successfully —
 
 ### Fix pattern to suggest
 If any expected asset is missing or failed, say so as the first line of the answer and recommend fixing the integration snippet / site key / environment before investigating the issue-specific symptom further — the rest of the capture is likely a downstream effect. Only proceed to the issue type's own playbook once `sdkAssets.verdict` is `loaded` (or the failure is explicitly ruled out as unrelated, e.g. a different host's asset was blocked while all Unbxd assets loaded fine).
+
+---
+
+## Config Bundle Review (SRP and PLP)
+
+SRP and PLP captures additionally include `siteConfig`, a review of the
+customer's `{siteKey}_search.js` / `_search.css` bundle. Most SRP/PLP tickets
+are resolved here rather than in the API response.
+
+**Read `siteConfig.liveConfig`, not the bundle text.** That bundle is the whole
+vanilla search library *plus* the customer's config *plus* their template
+functions (~350KB minified), and the config is usually assembled at runtime by
+a `createSearchConfig()` factory. `liveConfig.options` is the resolved config
+read off the live instance (`window.unbxdSearch.options`) and is authoritative.
+`bundleReview[].bundleMarkers` are regex counts over that minified text — which
+includes the SDK's own demo defaults — so they are only good for:
+`builtForSiteKey`/`builtForApiKey` (which site and environment the bundle was
+built for), `instantiations` (how many `new UnbxdSearch(` the file contains),
+and file facts (bytes, `lastModified`). Never quote a marker count as if it
+were the customer's setting.
+
+### The three checks that resolve most tickets
+
+1. **`liveConfig.selectorChecks[].matchCount === 0`** — a config element
+   selector that matches nothing on the page. Each entry carries the dotted
+   `configPath` (`products.el`, `facet.facetsEl`, `pagination.el`,
+   `searchBoxEl`…), which is the exact key to quote in the fix. This is the
+   single most common cause of an empty grid or a dead module, and it usually
+   means the customer's theme changed a container class, or the SDK script ran
+   before the DOM existed (also shows up as `... el is not a valid DOM
+   selector` in `consoleErrors`). `matchCount: -2` means the selector string is
+   not valid CSS at all.
+2. **`siteConfig.consistency.allMatch === false`** — the site key differs
+   between the bundle it was built for, the running config and the actual API
+   request. Wrong environment or wrong catalogue; nothing downstream will make
+   sense until it is fixed.
+3. **`liveConfig.instanceFound === false`** — the SDK never initialised on this
+   page. Check `bundleMarkers.instantiations` and the page-detection condition
+   against `renderedPage.bodyClasses` (Magento: `body.catalog-category-view`;
+   Shopify: `template-collection`).
+
+### Config keys that are usually the root cause
+| Symptom | Key to check |
+|---|---|
+| Empty product grid, no console errors | `products.el` (selectorChecks), `products.attributesMap`, `productAttributes` vs `responseSummary.productFieldNames` |
+| Broken/placeholder images | `attributesMap` image field name, and whether the API field is an array the template treats as a string |
+| PLP shows search results | `productType` (must be `CATEGORY`), `browseQueryParam`, the `setCategoryId` logic |
+| Back button loops on PLP | `pagination.type: FIXED_PAGINATION` + `url.pageSizeParam.addToUrl` / `pageNoParam.addToUrl` |
+| Customer's own URL params vanish | `url.allowExternalUrlParams` (default `false` strips them) |
+| SDK writes `?` but site uses `#` | `url.hashMode` |
+| Price/range facet renders as a text facet | `url.facetsParam.rangeFacets` missing the field |
+| Facets all expanded, not collapsible | `facet.isCollapsible`, `facet.defaultOpen` |
+| Wrong page count / hundreds of pages | `pagination.pageSize` vs the `rows` actually sent, `pageNoParam.usePageNo` |
+| Infinite scroll never fires | `pagination.infiniteScrollTriggerEl`, `heightDiffToTriggerNextPage`, an `overflow:hidden` products container |
+| 2–3 API calls per page load | duplicate script tags (`assetUrls.duplicateKinds`), `bundleMarkers.instantiations > 1`, or a manual `getResults()`/`getCategoryPage()` on top of the automatic one (`apiCallCounts`) |
+| Analytics events missing | `unbxdAnalytics`, `liveConfig.analyticsConfPresent` |
+
+### CSS review
+`bundleReview[].cssMarkers.riskyWidgetRules` lists rules in `_search.css` whose
+selector mentions `UNX`/`unbxd` and whose body contains `display:none`,
+`visibility:hidden`, `opacity:0`, `height:0`, `position`, `z-index` or
+`overflow`. When the API returned products and `selectorChecks` are clean but
+nothing is visible, this is where to look next.
+
+### Fix pattern to suggest
+Name the config key path and the exact value change (`pagination.pageSizeParam.addToUrl: true → false`), say the change belongs in the customer's `{siteKey}_search.js` (the CX engineer edits and redeploys the bundle; it is not an Unbxd console setting unless the key is catalogue-side), and note any behaviour the change alters. Then write the **Fix prompt** section addressed to a coding agent with that same file, key path and target value spelled out.
 
 ---
 
@@ -147,7 +215,47 @@ Compare `responseSummary.returnedProductCount` with `renderedPage.domProductNode
 8. **Right data, wrong endpoint conflated** — an SRP built from `category` behaves differently from one built on `search` (different param shape, e.g. `p=` vs `q=`); check `searchRequest.apiType` before assuming the wrong root cause category.
 
 ### Fix pattern to suggest
-State the API-versus-UI verdict in the first sentence and quote the two numbers that prove it. For API-side causes, give the corrected request params and say which side owns the change (storefront integration code versus Unbxd console configuration). For UI-side causes, name the specific response field the template should read. For races, recommend sequencing/aborting stale requests rather than debouncing alone. If the evidence cannot separate the two, say exactly which additional capture would (for example: re-run the query in an incognito window, or capture with a facet applied).
+State the API-versus-UI verdict in the first sentence and quote the two numbers that prove it. For API-side causes, give the corrected request params and say which side owns the change (storefront integration code versus Unbxd console configuration). For UI-side causes, name the specific response field the template should read, and the config key (`attributesMap`, `productAttributes`, `products.el`) that needs changing in `{siteKey}_search.js`. For races, recommend sequencing/aborting stale requests rather than debouncing alone. If the evidence cannot separate the two, say exactly which additional capture would (for example: re-run the query in an incognito window, or capture with a facet applied).
+
+---
+
+## PLP (Category / Browse Page) Issues
+
+A PLP is driven by the `category` endpoint
+(`https://search.unbxd.io/{apiKey}/{siteKey}/category?p=category_handle_uFilter%3A%22...%22&...`)
+and by a different part of the config than search. Most PLP tickets are config,
+URL-state or page-type-detection problems, not API problems — check those before
+comparing counts.
+
+### Symptoms to recognise
+- Category page shows generic search results, or "no results", instead of the category's products.
+- The SDK does not fire at all on category pages (works on search).
+- Filters passed in the URL (`filter=brand_uFilter:"X"`) are stripped after load; no facets show as selected; unfiltered results render.
+- Browser back button is stuck in a loop; the URL gains `?rows=…&page=…` immediately on load.
+- Pagination shows the wrong number of pages, or infinite scroll never triggers.
+- Two or three `category` calls fire on a single page load.
+
+### What context to capture
+Same as SRP (`capture.searchApi`, `capture.network`, `capture.console`, `capture.siteConfig`), but the `category` endpoint wins when a page fired both, and additionally: the page's URL/history state (`renderedPage.urlParams`, `urlHasFilterParam`, `urlHasSdkPaginationParams`, `historyLength`, `bodyClasses`) and `apiCallCounts`. Response data stays counts-and-shape only; no DOM geometry.
+
+### The order to check things
+1. **Page type** — `liveConfig.options.productType` and `liveConfig.state.productTypeOption` must be `CATEGORY`; `searchRequest.apiType` says which endpoint actually fired.
+2. **Did the SDK initialise at all** — `liveConfig.instanceFound`; if false, compare the page-detection condition with `renderedPage.bodyClasses`.
+3. **URL state** — a filter in `urlParams` that is absent from `searchRequest.params` means it was dropped after load.
+4. **Then** the ordinary API-versus-UI count comparison, exactly as for SRP.
+
+### Common root causes, most likely first
+1. **`productType` is `SEARCH` on a category page** — or `setCategoryId` isn't extracting the category path. The page renders search results or nothing. Check `browseQueryParam` too.
+2. **Page-type detection misses** — the init condition never matches, so the SDK doesn't run on PLPs at all (`instanceFound: false`). Platform-specific: Magento checks `body.catalog-category-view`, Shopify checks for a `template-collection` class.
+3. **`getCategoryPage()` double-fire drops URL filters** — the constructor's `bindEvents` already calls `renderFromUrl()` when URL params exist, and the customer's init script calls `getCategoryPage()` on top of it. The second, unfiltered call wins. Signature: `urlHasFilterParam: true`, the filter missing from `searchRequest.params`, and `apiCallCounts.category > 1`.
+4. **Back-button loop (`FIXED_PAGINATION` + `addToUrl`)** — with `pagination.type: FIXED_PAGINATION`, the SDK appends `rows`/`page` via `pushState` on load, creating a duplicate history entry; Back returns to the original URL and re-triggers it. `replaceState` is only used for `INFINITE_SCROLL`/`CLICK_N_SCROLL`. Signature: `urlHasSdkPaginationParams: true` plus those config values, and a grown `historyLength`.
+5. **Customer URL params stripped** — `url.allowExternalUrlParams: false` (the default) removes UTM/tracking/custom params when the SDK rewrites the URL.
+6. **Pagination maths wrong** — `pagination.pageSize` disagrees with the `rows` actually sent, or `pageNoParam.usePageNo` is set for start-index pagination (or vice versa).
+7. **Infinite scroll never triggers** — `infiniteScrollTriggerEl` points at `window` while the real scroller is a container, `heightDiffToTriggerNextPage` is mis-sized, or the products container has `overflow: hidden`.
+8. **Empty grid from a selector or field mismatch** — identical to SRP: a `selectorChecks` entry with `matchCount: 0`, or `attributesMap` fields the catalogue doesn't return.
+
+### Fix pattern to suggest
+Say which of the four checks above failed, and quote its value. Most PLP fixes are a single config key in `{siteKey}_search.js` — give the key path and the before/after value (`url.pageSizeParam.addToUrl: true → false`). For the `getCategoryPage()` double-fire, the fix is to guard the manual call rather than remove it: only call it when the URL carries no SDK state, since `renderFromUrl()` already handles that case. Say explicitly whether the change is in the customer's bundle (CX engineer redeploys it) or in the Unbxd console (catalogue/config side).
 
 ---
 

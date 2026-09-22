@@ -17,7 +17,9 @@ cause plus a recommended fix you can paste into a ticket.
 2. Popup → **Debug** tab → pick the issue type and describe the problem.
 3. **Start capture** → reproduce the issue on the page (search, type in autosuggest,
    click a facet) → **Stop & analyse**.
-4. Read the analysis, hit **Copy**, paste into the ticket.
+4. Read the analysis, hit **Copy**, paste into the ticket. For SRP/PLP issues the
+   answer also ends with a **Fix prompt** — its own copy button — written for an AI
+   coding agent with the customer's integration repo open.
 
 Chrome shows a "CX Debug Assistant started debugging this browser" banner while a
 capture is running. That banner disappearing means the capture has ended.
@@ -35,7 +37,8 @@ auth headers. See the Options page and `AGENTS.md` for the full boundary.
 |---|---|
 | Proxy / VPN / access | failed + blocked requests, CORS/DNS/TLS/geo signatures, browser environment |
 | Autosuggest alignment | box models and computed styles of the dropdown and its anchor input, clipping/stacking ancestors |
-| SRP UI | the search API request params and response counts/shape, plus what the DOM rendered |
+| SRP UI | the `search` API request params and response counts/shape, what the DOM rendered, plus a review of the site's `{siteKey}_search.js` / `_search.css` config bundle |
+| PLP / category | the `category` API call, the page's URL/history state (dropped filters, back-button loop), plus the same config-bundle review |
 
 Playbooks per type live in [SKILLS.md](SKILLS.md); the codebase guide for agents is
 [AGENTS.md](AGENTS.md).

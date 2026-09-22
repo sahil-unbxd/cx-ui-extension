@@ -36,6 +36,7 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
 | CDP attach/detach wrapper | `src/capture/cdp.js` |
 | Network + console recording | `src/capture/recorder.js` |
 | **Shared "validate first" SDK-asset check (all issue types)** | `src/capture/sdk-assets.js` |
+| **Customer config bundle review (SRP/PLP)** | `src/capture/site-config.js` |
 | **Per-issue-type capture** | `src/capture/strategies.js` |
 | **Redaction (privacy boundary)** | `src/capture/redact.js` |
 | **Per-issue-type prompt templates** | `src/prompt/templates.js` |
@@ -71,6 +72,16 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
   forwards load status/timing for known Unbxd asset URLs only, never page data, so
   it doesn't reopen the per-type boundary. Don't widen it into a general network
   dump for the DOM-only issue type.
+- **Config review extracts, it never dumps.** `site-config.js` fetches the
+  customer's `{siteKey}_search.js` (~350KB minified, SDK library + config +
+  their templates) and `_search.css`. The file text must never reach a prompt —
+  only named markers and the resolved live config. A real capture serialises to
+  ~4KB. If you need a new signal, add a named extraction, not a bigger slice.
+  Keep the `liveConfig` (authoritative, read off `window.unbxdSearch.options`)
+  versus `bundleMarkers` (regex heuristics over text that also contains the
+  SDK's own demo defaults) distinction intact in both the data and the prompt —
+  collapsing it is how a model ends up confidently quoting a library default as
+  the customer's setting.
 - **Only search/category/autosuggest are "the" Unbxd API.** `src/shared/unbxd-endpoints.js`
   is the single source of truth for matching `search.unbxd.io/{apiKey}/{siteKey}/
   {search|category|autosuggest}` and the `libraries.unbxdapi.com` /
