@@ -29,7 +29,12 @@ export const DEFAULT_SETTINGS = {
   maxPromptTokens: 12000,
   // Agent mode keeps the debugger attached and lets the model investigate with
   // tools instead of answering from one static capture.
-  agentMode: true
+  agentMode: true,
+  // Auto-stop: for issue types with a deterministic self-debug procedure
+  // (results pages, autosuggest data), stop and analyse automatically once
+  // the evidence is conclusive — no manual "Stop & analyse" click needed.
+  // Has no effect on issue types without one (proxy/access, alignment).
+  autoStop: true
 };
 
 export async function getSettings() {

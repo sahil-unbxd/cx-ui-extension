@@ -134,6 +134,11 @@ alone is usually a catalogue/indexing gap.
 is the exact key to fix. Products returned but no DOM nodes = rendering
 problem; zero returned = go back to steps 3–4.
 
+`api_results_rendered` is the **terminal check**: it needs the full request →
+response → DOM picture, so its being the extension's auto-stop trigger too
+(`src/capture/auto-stop.js`) — once it (or any earlier check) reaches a real
+pass/fail, the capture stops itself without the engineer clicking anything.
+
 ### Step 7 — hygiene
 `single_api_call` (double init, duplicate script tag, or a manual
 `getResults()`/`getCategoryPage()` on top of the automatic one) and
@@ -189,6 +194,10 @@ say so rather than trying to answer it from this context.
    return products: does `rendered.popularProductNodeCounts` show anything
    inside the dropdown? A `FAIL` here is a template/container-selector problem
    in `autosuggest.js`, not a data problem — don't conflate the two.
+
+`popular_products_rendered` is the **terminal check** — the auto-stop watcher
+(`src/capture/auto-stop.js`) treats it, or any earlier FAIL, as "conclusive"
+and stops the capture on its own, no manual "Stop & analyse" needed.
 
 ### A note on `sdkState`
 Unlike the search/category widget (`window.unbxdSearch`, reliable), we do not

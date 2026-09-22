@@ -40,6 +40,10 @@
     <input type="checkbox" id="agent-mode" />
     <span>Agent mode <small>— the model investigates with tools over the live page (keeps the debugger attached for the duration, costs more tokens, usually a better answer)</small></span>
   </label>
+  <label class="check">
+    <input type="checkbox" id="auto-stop" />
+    <span>Auto-stop <small>— for SRP/PLP and Autosuggest Data issues, stop and analyse automatically once the evidence is conclusive, no manual "Stop & analyse" needed. Has no effect on issue types without a self-debug procedure.</small></span>
+  </label>
 
   <div class="actions">
     <button id="save" class="primary">Save</button>

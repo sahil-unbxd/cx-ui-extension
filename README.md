@@ -16,10 +16,13 @@ cause plus a recommended fix you can paste into a ticket.
 1. Open the page you are debugging.
 2. Popup → **Debug** tab → pick the issue type and describe the problem.
 3. **Start capture** → reproduce the issue on the page (search, type in autosuggest,
-   click a facet) → **Stop & analyse**.
-4. Read the analysis, hit **Copy**, paste into the ticket. For SRP/PLP issues the
-   answer also ends with a **Fix prompt** — its own copy button — written for an AI
-   coding agent with the customer's integration repo open.
+   click a facet). For SRP, PLP and Autosuggest Data issues, the extension stops
+   and analyses **on its own** once it has conclusive evidence — no need to click
+   anything (toggle this off per-run, or in Settings, if you'd rather stop manually).
+   Other issue types still need **Stop & analyse**.
+4. Read the analysis, hit **Copy**, paste into the ticket. For SRP/PLP/Autosuggest
+   Data issues the answer also ends with a **Fix prompt** — its own copy button —
+   written for an AI coding agent with the customer's integration repo open.
 
 Chrome shows a "CX Debug Assistant started debugging this browser" banner while a
 capture is running. That banner disappearing means the capture has ended.

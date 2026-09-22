@@ -11,6 +11,7 @@ import { runStrategy } from '../capture/strategies.js';
 import { buildPrompt } from '../prompt/builder.js';
 import { complete } from '../llm/client.js';
 import { createToolbox } from '../capture/toolbox.js';
+import { createAutoStopWatcher } from '../capture/auto-stop.js';
 import { runAgentLoop } from '../llm/agent.js';
 import { getIssueType } from '../shared/issue-types.js';
 import { getSettings } from '../shared/settings.js';
@@ -56,10 +57,11 @@ function status() {
   };
 }
 
-async function startCapture({ tabId, issueTypeId, reload = false }) {
+async function startCapture({ tabId, issueTypeId, reload = false, description = '' }) {
   if (active) await cancelCapture();
 
   const type = getIssueType(issueTypeId);
+  const settings = await getSettings();
   const session = new CdpSession(tabId);
   await session.attach();
 
@@ -80,6 +82,15 @@ async function startCapture({ tabId, issueTypeId, reload = false }) {
     session,
     recorder,
     reloaded: false,
+    // Snapshotted here rather than re-read from the popup at stop time,
+    // because auto-stop (below) can fire with the popup closed. Matches the
+    // documented flow — describe, then start — so this is the value that
+    // exists at the moment the engineer decided to start capturing. Edits
+    // made to the description while recording is in progress are not picked
+    // up; restart the capture if the description needs to change materially.
+    description,
+    stopping: false,
+    autoStopWatcher: null,
     startedAt: Date.now(),
     timer: setTimeout(() => {
       // Safety net: a forgotten session must not keep the debugger banner up.
@@ -87,10 +98,25 @@ async function startCapture({ tabId, issueTypeId, reload = false }) {
     }, HARD_STOP_MS)
   };
 
+  // Auto-stop only exists for issue types with a deterministic, conclusive
+  // self-debug procedure (results-page and autosuggest-data types) — see
+  // auto-stop.js. It watches the same live session and recorder rather than
+  // polling, and calls stopAndAnalyse itself once the evidence is conclusive,
+  // so the engineer never has to press "Stop & analyse".
+  if (settings.autoStop !== false && type.capture.selfDebugKind) {
+    active.autoStopWatcher = createAutoStopWatcher({
+      session,
+      recorder,
+      selfDebugKind: type.capture.selfDebugKind,
+      onReady: () => triggerAutoStop(tabId)
+    });
+  }
+
   await setBadge(tabId, 'REC');
 
   // Recording is already live, so the reload's asset and first-API-call
-  // traffic lands in this capture.
+  // traffic lands in this capture (and the auto-stop watcher, already
+  // attached, sees it too).
   if (reload) {
     const result = await session.reload();
     if (active) active.reloaded = Boolean(result && result.reloaded);
@@ -99,9 +125,36 @@ async function startCapture({ tabId, issueTypeId, reload = false }) {
   return { recording: true, issueTypeId: type.id, hardStopMs: HARD_STOP_MS, reloaded: Boolean(active && active.reloaded) };
 }
 
-async function stopAndAnalyse({ description, issueTypeId, options, agentMode }) {
+/** Called by the auto-stop watcher, not by a message from the popup — so
+ *  errors here have no caller to report back to. Surfaced two ways instead:
+ *  a badge change, and a stored flag the popup checks on open (see
+ *  popup.js), plus a live broadcast for a popup that happens to be open. */
+async function triggerAutoStop(tabId) {
+  if (!active || active.tabId !== tabId || active.stopping) return;
+  try {
+    await stopAndAnalyse({ description: active.description, issueTypeId: active.issueTypeId }, 'auto');
+  } catch (err) {
+    const message = String((err && err.message) || err);
+    await chrome.storage.local.set({ lastAutoStopError: { message, at: Date.now() } }).catch(() => {});
+    await setBadge(tabId, 'ERR').catch(() => {});
+    chrome.runtime.sendMessage({ type: 'capture.autostop-error', error: message }).catch(() => {});
+  }
+}
+
+async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, triggeredBy = 'manual') {
   if (!active) throw new Error('No capture is running. Press "Start capture" first.');
-  const { session, recorder, tabId, reloaded } = active;
+  if (active.stopping) {
+    // A manual click and the auto-stop watcher can race in principle. The
+    // auto path backs off silently (a stop is already underway, which will
+    // produce the same result); a second manual click gets a clear message
+    // instead of a confusing duplicate detach.
+    if (triggeredBy === 'auto') return;
+    throw new Error('Analysis is already in progress.');
+  }
+  active.stopping = true;
+
+  const { session, recorder, tabId, reloaded, autoStopWatcher } = active;
+  if (autoStopWatcher) autoStopWatcher.dispose();
   const typeId = issueTypeId || active.issueTypeId;
   const settings = await getSettings();
   const useAgent = agentMode ?? settings.agentMode;
@@ -172,6 +225,7 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }) 
       model: answer.model,
       usage: answer.usage,
       answer: answer.text,
+      autoStopped: triggeredBy === 'auto',
       agent: agentRun
         ? { steps: agentRun.steps, iterations: agentRun.iterations, stoppedBecause: agentRun.stoppedBecause }
         : null,
@@ -179,6 +233,13 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }) 
       prompt: prompt.user
     };
     await chrome.storage.local.set({ lastAnalysis: record });
+    // The popup already gets a manually-triggered result as the direct
+    // response to its own capture.stop message; broadcast is only needed for
+    // the auto path, where nothing sent that message and a popup that's open
+    // would otherwise sit showing "Recording…" forever.
+    if (triggeredBy === 'auto') {
+      chrome.runtime.sendMessage({ type: 'capture.autostopped', record }).catch(() => {});
+    }
     return record;
   } finally {
     if (active) clearTimeout(active.timer);
@@ -196,6 +257,7 @@ function broadcastStep(step) {
 async function cancelCapture() {
   if (!active) return { recording: false };
   clearTimeout(active.timer);
+  if (active.autoStopWatcher) active.autoStopWatcher.dispose();
   active.recorder.stop();
   await active.session.detach();
   await setBadge(active.tabId, '');

@@ -52,6 +52,10 @@ function onIssueTypeChange() {
   const type = getIssueType($('issue-type').value);
   $('issue-hint').textContent = type.hint;
   $('selector-overrides').hidden = !type.capture.domGeometry;
+  // Auto-stop only means anything for issue types with a deterministic
+  // self-debug procedure (results pages, autosuggest data) — hide the
+  // control entirely rather than show a toggle that does nothing.
+  $('auto-stop-row').hidden = !type.capture.selfDebugKind;
   chrome.storage.local.set({ lastIssueType: type.id });
 }
 $('issue-type').addEventListener('change', onIssueTypeChange);
@@ -60,8 +64,11 @@ $('issue-type').addEventListener('change', onIssueTypeChange);
 $('agent-mode').addEventListener('change', () => {
   saveSettings({ agentMode: $('agent-mode').checked }).catch(() => {});
 });
+$('auto-stop').addEventListener('change', () => {
+  saveSettings({ autoStop: $('auto-stop').checked }).catch(() => {});
+});
 
-function setRecording(on, startedAt) {
+function setRecording(on, startedAt, autoStopArmed = false) {
   state.recording = on;
   $('start').hidden = on;
   $('stop').hidden = !on;
@@ -70,8 +77,9 @@ function setRecording(on, startedAt) {
   clearInterval(state.ticker);
   if (on) {
     const t0 = startedAt || Date.now();
+    const suffix = autoStopArmed ? ' — will stop itself once the evidence is conclusive' : '';
     const tick = () => setStatus(
-      `Recording — reproduce the issue on the page, then press "Stop & analyse". (${Math.round((Date.now() - t0) / 1000)}s)`,
+      `Recording — reproduce the issue on the page${suffix}. (${Math.round((Date.now() - t0) / 1000)}s)`,
       'recording'
     );
     tick();
@@ -81,14 +89,17 @@ function setRecording(on, startedAt) {
 
 $('start').addEventListener('click', async () => {
   try {
+    const type = getIssueType($('issue-type').value);
+    const autoStopArmed = Boolean(type.capture.selfDebugKind) && $('auto-stop').checked;
     await send({
       type: 'capture.start',
       tabId: state.tabId,
       issueTypeId: $('issue-type').value,
-      reload: $('reload-on-start').checked
+      reload: $('reload-on-start').checked,
+      description: $('description').value
     });
     $('result').hidden = true;
-    setRecording(true, Date.now());
+    setRecording(true, Date.now(), autoStopArmed);
   } catch (err) {
     setStatus(String(err.message), 'error');
   }
@@ -133,12 +144,27 @@ $('stop').addEventListener('click', async () => {
 // The service worker streams tool calls while the model investigates, so the
 // engineer can watch it work instead of staring at a spinner.
 chrome.runtime.onMessage.addListener((msg) => {
-  if (!msg || msg.type !== 'agent.step') return;
-  const step = msg.step;
-  if (step.type === 'tool_start') {
-    setStatus(`Investigating — ${step.name}(${summariseArgs(step.input)})`);
-  } else if (step.type === 'thought' && step.text) {
-    setStatus(`Investigating — ${step.text.slice(0, 120)}`);
+  if (!msg) return;
+  if (msg.type === 'agent.step') {
+    const step = msg.step;
+    if (step.type === 'tool_start') {
+      setStatus(`Investigating — ${step.name}(${summariseArgs(step.input)})`);
+    } else if (step.type === 'thought' && step.text) {
+      setStatus(`Investigating — ${step.text.slice(0, 120)}`);
+    }
+    return;
+  }
+  // The background stopped and analysed on its own — this popup never sent
+  // capture.stop, so it would otherwise sit showing "Recording…" forever.
+  if (msg.type === 'capture.autostopped' && state.recording) {
+    setRecording(false);
+    renderResult(msg.record);
+    setStatus('Stopped automatically — the evidence was conclusive.');
+    return;
+  }
+  if (msg.type === 'capture.autostop-error' && state.recording) {
+    setRecording(false);
+    setStatus(`Auto-stopped, but analysis failed: ${msg.error}`, 'error');
   }
 });
 
@@ -320,8 +346,9 @@ async function refreshKeyWarning() {
   // Reflect the stored preference rather than the HTML default, so a choice
   // made on the options page actually holds.
   $('agent-mode').checked = settings.agentMode !== false;
+  $('auto-stop').checked = settings.autoStop !== false;
 
-  const stored = await chrome.storage.local.get(['lastIssueType', 'lastAnalysis']);
+  const stored = await chrome.storage.local.get(['lastIssueType', 'lastAnalysis', 'lastAutoStopError']);
   renderIssueTypes(stored.lastIssueType);
   await refreshKeyWarning();
 
@@ -329,11 +356,23 @@ async function refreshKeyWarning() {
   if (status.recording) {
     $('issue-type').value = status.issueTypeId;
     onIssueTypeChange();
-    setRecording(true, Date.now() - status.elapsedMs);
+    const type = getIssueType(status.issueTypeId);
+    const autoStopArmed = Boolean(type.capture.selfDebugKind) && settings.autoStop !== false;
+    setRecording(true, Date.now() - status.elapsedMs, autoStopArmed);
   } else if (stored.lastAnalysis) {
     renderResult(stored.lastAnalysis);
-    setStatus(`Showing the previous analysis (${new Date(stored.lastAnalysis.createdAt).toLocaleTimeString()}).`);
+    const when = new Date(stored.lastAnalysis.createdAt).toLocaleTimeString();
+    setStatus(
+      stored.lastAnalysis.autoStopped
+        ? `Stopped itself and analysed automatically at ${when}.`
+        : `Showing the previous analysis (${when}).`
+    );
+  } else if (stored.lastAutoStopError && Date.now() - stored.lastAutoStopError.at < 10 * 60 * 1000) {
+    // Auto-stop fired while the popup was closed and the analysis call
+    // itself failed (e.g. bad key) — nothing else could have shown this.
+    setStatus(`The capture stopped automatically, but analysis failed: ${stored.lastAutoStopError.message}`, 'error');
   }
+  chrome.storage.local.remove('lastAutoStopError');
 
   if (!tab || /^(chrome|edge|about|chrome-extension):/.test(tab.url || '')) {
     $('start').disabled = true;

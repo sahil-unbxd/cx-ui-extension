@@ -12,10 +12,11 @@ popup (Debug tab)                 service worker                      provider
   issue type + description  ──▶  capture.start  ──▶ chrome.debugger.attach
                                                      Recorder: network (always) + console
                                                  ──▶ Page.reload (opt-in, default on)
+                                                 ──▶ createAutoStopWatcher()  [results_page / autosuggest_data only]
   (engineer reproduces the bug on the page)
-  Stop & analyse            ──▶  capture.stop   ──▶ captureSdkAssets(recorder)  [every issue type]
+  Stop & analyse ─OR─ auto-stop ──▶  capture.stop  ──▶ captureSdkAssets(recorder)  [every issue type]
                                                  ──▶ strategy(issueType)  [DOM/CSS, or search/category API]
-                                                 ──▶ runSelfDebug()  [SRP/PLP: ordered pass/fail verdicts]
+                                                 ──▶ runSelfDebug()  [SRP/PLP/autosuggest-data: ordered pass/fail verdicts]
                                                  ──▶ buildPrompt(template + SKILLS.md + budgeted JSON)
                                                  ──▶ agent mode: runAgentLoop() ⇄ toolbox over LIVE session
                                                      one-shot mode: client.complete()  ──▶ Anthropic / OpenAI
@@ -28,6 +29,21 @@ in `service-worker.js`): the `sdkAssets` check — "did search.js/autosuggest.js
 their CSS load?" — runs for every issue type before anything issue-specific,
 because a broken SDK bundle explains almost any downstream symptom. Per-type
 strategies still decide what, if anything, *beyond* that gets forwarded.
+
+**Auto-stop.** For issue types with a deterministic self-debug procedure
+(`capture.selfDebugKind` set — currently `results_page` and
+`autosuggest_data`), a watcher (`src/capture/auto-stop.js`) runs alongside the
+recorder for the whole capture: on each relevant API response it debounces,
+re-runs that issue type's self-debug check via the toolbox, and once the
+result is conclusive (any check FAILs, or the terminal check —
+`api_results_rendered` / `popular_products_rendered` — reaches a real
+pass/fail rather than a skip) it calls the *same* `stopAndAnalyse` a manual
+click would, with no popup interaction required — the engineer's description
+is snapshotted at `capture.start` time for exactly this reason, since the
+popup is normally closed while they're reproducing the issue. Proxy/access and
+alignment issue types have no equivalent "we now have the full picture"
+signal, so no watcher is created for them; auto-stop is a no-op there
+regardless of the setting. See the constraint below before touching this path.
 
 ## Where things live
 
@@ -43,6 +59,7 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
 | **Self-debug checks (deterministic verdicts)** | `src/capture/self-debug.js` |
 | **MCP-style tool surface (agent mode)** | `src/capture/toolbox.js` |
 | **Agentic investigation loop** | `src/llm/agent.js` |
+| **Auto-stop watcher (no manual "Stop & analyse")** | `src/capture/auto-stop.js` |
 | **Per-issue-type capture** | `src/capture/strategies.js` |
 | **Redaction (privacy boundary)** | `src/capture/redact.js` |
 | **Per-issue-type prompt templates** | `src/prompt/templates.js` |
@@ -129,6 +146,22 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
   path would have redacted is a bug, not a feature.
 - **Issue type is chosen by the engineer.** No auto-detection in v1. If you add it,
   it must be a suggestion the engineer can override, not a silent switch.
+- **Auto-stop must only ever trigger the real `stopAndAnalyse`, never a second
+  code path.** `triggerAutoStop` in `service-worker.js` calls the exact same
+  function a manual "Stop & analyse" click does — there is no separate
+  "auto-completion" flow to keep in sync. The `active.stopping` guard exists
+  because a manual click and the watcher's `onReady` can race in principle;
+  don't remove it "to simplify" without re-verifying both race directions (a
+  test for this exists in the project's manual test notes — rebuild it before
+  touching this logic if there isn't an automated one by then). The watcher
+  must be disposed in every path that clears `active`
+  (`stopAndAnalyse`'s finally, `cancelCapture`) — a live listener on a detached
+  session is a leak, and a late `onReady` firing after `active` is null must be
+  a no-op (checked via `active.tabId !== tabId`), not a crash.
+- **Auto-stop only knows the description as of `capture.start`.** It cannot ask
+  a closed popup what the engineer typed since. If this needs to change (e.g.
+  polling the popup for a live value with a timeout), say so explicitly in the
+  commit — don't silently start dropping edits made mid-recording.
 
 ## Adding an issue type
 

@@ -21,6 +21,7 @@ async function render() {
   $('key-openai').value = s.apiKeys.openai || '';
   $('max-tokens').value = s.maxPromptTokens;
   $('agent-mode').checked = s.agentMode !== false;
+  $('auto-stop').checked = s.autoStop !== false;
 }
 
 function renderModels(current) {
@@ -37,7 +38,8 @@ $('save').addEventListener('click', async () => {
     model: $('model').value,
     apiKeys: { claude: $('key-claude').value.trim(), openai: $('key-openai').value.trim() },
     maxPromptTokens: Number($('max-tokens').value) || DEFAULT_SETTINGS.maxPromptTokens,
-    agentMode: $('agent-mode').checked
+    agentMode: $('agent-mode').checked,
+    autoStop: $('auto-stop').checked
   });
   $('status').textContent = 'Saved.';
   setTimeout(() => ($('status').textContent = ''), 1500);
