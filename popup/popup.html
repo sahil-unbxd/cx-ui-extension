@@ -36,6 +36,16 @@
       <label class="field"><span>Dropdown selector</span><input id="dropdown-selector" placeholder="auto-detect" /></label>
     </details>
 
+    <label class="check">
+      <input type="checkbox" id="agent-mode" checked />
+      <span>Let the model investigate with tools <small>— keeps the debugger attached and queries the live page</small></span>
+    </label>
+
+    <label class="check">
+      <input type="checkbox" id="reload-on-start" checked />
+      <span>Reload the page when capture starts <small>— catches the SDK bundles and the first API call</small></span>
+    </label>
+
     <div class="actions">
       <button id="start" class="primary">Start capture</button>
       <button id="stop" class="primary" hidden>Stop &amp; analyse</button>
@@ -50,6 +60,11 @@
         <span id="result-meta" class="meta"></span>
         <button id="copy" class="link">Copy</button>
       </div>
+      <div id="verdicts" class="verdict" hidden></div>
+      <details id="trace-box" hidden>
+        <summary>Investigation trace (<span id="trace-count">0</span> steps)</summary>
+        <div id="trace" class="trace"></div>
+      </details>
       <pre id="answer"></pre>
       <div id="fix-prompt-box" hidden>
         <div class="result-head">

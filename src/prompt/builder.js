@@ -13,12 +13,15 @@ const SDK_VALIDATION_HEADING = 'SDK Asset Validation (All Issue Types)';
 // Injected only for issue types whose capture reviews the customer's config
 // bundle (capture.siteConfig) — it documents the `siteConfig` context block.
 const CONFIG_REVIEW_HEADING = 'Config Bundle Review (SRP and PLP)';
+// The deterministic checks the extension runs on itself before the model sees
+// anything; paired with capture.siteConfig because the same issue types run it.
+const SELF_DEBUG_HEADING = 'Self-Debug Procedure (SRP and PLP)';
 
 export async function buildPrompt({ issueTypeId, description, context, pageUrl, maxTokens = 12000 }) {
   const type = getIssueType(issueTypeId);
   const template = getTemplate(type.id);
   const headings = [SDK_VALIDATION_HEADING];
-  if (type.capture && type.capture.siteConfig) headings.push(CONFIG_REVIEW_HEADING);
+  if (type.capture && type.capture.siteConfig) headings.push(SELF_DEBUG_HEADING, CONFIG_REVIEW_HEADING);
   headings.push(type.skillsSection);
 
   const sections = await Promise.all(headings.map((h) => getSkillSection(h)));

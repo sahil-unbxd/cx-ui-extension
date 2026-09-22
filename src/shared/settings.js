@@ -26,7 +26,10 @@ export const DEFAULT_SETTINGS = {
   model: PROVIDERS.claude.defaultModel,
   apiKeys: { claude: '', openai: '' },
   captureSeconds: 20,
-  maxPromptTokens: 12000
+  maxPromptTokens: 12000,
+  // Agent mode keeps the debugger attached and lets the model investigate with
+  // tools instead of answering from one static capture.
+  agentMode: true
 };
 
 export async function getSettings() {

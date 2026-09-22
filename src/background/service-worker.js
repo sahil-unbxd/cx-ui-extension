@@ -10,10 +10,15 @@ import { Recorder } from '../capture/recorder.js';
 import { runStrategy } from '../capture/strategies.js';
 import { buildPrompt } from '../prompt/builder.js';
 import { complete } from '../llm/client.js';
+import { createToolbox } from '../capture/toolbox.js';
+import { runAgentLoop } from '../llm/agent.js';
 import { getIssueType } from '../shared/issue-types.js';
 import { getSettings } from '../shared/settings.js';
 
 const HARD_STOP_MS = 5 * 60 * 1000; // never hold the debugger longer than this
+// Agent mode keeps the debugger attached while the model investigates; this is
+// the backstop for that phase so a hung loop cannot leave it attached.
+const ANALYSIS_GUARD_MS = 4 * 60 * 1000;
 
 /** @type {{tabId:number, issueTypeId:string, session:CdpSession, recorder:Recorder, startedAt:number, timer:any}|null} */
 let active = null;
@@ -51,7 +56,7 @@ function status() {
   };
 }
 
-async function startCapture({ tabId, issueTypeId }) {
+async function startCapture({ tabId, issueTypeId, reload = false }) {
   if (active) await cancelCapture();
 
   const type = getIssueType(issueTypeId);
@@ -74,6 +79,7 @@ async function startCapture({ tabId, issueTypeId }) {
     issueTypeId: type.id,
     session,
     recorder,
+    reloaded: false,
     startedAt: Date.now(),
     timer: setTimeout(() => {
       // Safety net: a forgotten session must not keep the debugger banner up.
@@ -82,59 +88,109 @@ async function startCapture({ tabId, issueTypeId }) {
   };
 
   await setBadge(tabId, 'REC');
-  return { recording: true, issueTypeId: type.id, hardStopMs: HARD_STOP_MS };
+
+  // Recording is already live, so the reload's asset and first-API-call
+  // traffic lands in this capture.
+  if (reload) {
+    const result = await session.reload();
+    if (active) active.reloaded = Boolean(result && result.reloaded);
+  }
+
+  return { recording: true, issueTypeId: type.id, hardStopMs: HARD_STOP_MS, reloaded: Boolean(active && active.reloaded) };
 }
 
-async function stopAndAnalyse({ description, issueTypeId, options }) {
+async function stopAndAnalyse({ description, issueTypeId, options, agentMode }) {
   if (!active) throw new Error('No capture is running. Press "Start capture" first.');
-  const { session, recorder, tabId } = active;
+  const { session, recorder, tabId, reloaded } = active;
   const typeId = issueTypeId || active.issueTypeId;
+  const settings = await getSettings();
+  const useAgent = agentMode ?? settings.agentMode;
 
+  // In agent mode the debugger stays attached while the model investigates, so
+  // its tools observe the live page. Detach therefore has to happen after the
+  // LLM work, not before it — hence the single try/finally around everything.
   let context;
+  let answer;
+  let agentRun = null;
+  const pageUrl = await tabUrl(tabId);
+
   try {
     recorder.stop();
-    context = await runStrategy(typeId, session, recorder, options || {});
-  } finally {
     clearTimeout(active.timer);
+    // Fresh guard for the analysis phase: if the model loop hangs, the
+    // debugger must still come off the tab.
+    active.timer = setTimeout(() => {
+      cancelCapture().catch(() => {});
+    }, ANALYSIS_GUARD_MS);
+
+    context = await runStrategy(typeId, session, recorder, { ...(options || {}), reloaded });
+
+    const prompt = await buildPrompt({
+      issueTypeId: typeId,
+      description,
+      context,
+      pageUrl,
+      maxTokens: settings.maxPromptTokens
+    });
+
+    const apiKey = settings.apiKeys[settings.provider];
+
+    if (useAgent) {
+      const toolbox = createToolbox({ session, recorder });
+      agentRun = await runAgentLoop({
+        provider: settings.provider,
+        model: settings.model,
+        apiKey,
+        system: prompt.system,
+        user: prompt.user,
+        toolbox,
+        onStep: (step) => broadcastStep(step)
+      });
+      answer = {
+        text: agentRun.text,
+        usage: agentRun.usage,
+        model: agentRun.model,
+        provider: settings.provider
+      };
+    } else {
+      answer = await complete({
+        provider: settings.provider,
+        model: settings.model,
+        apiKey,
+        system: prompt.system,
+        user: prompt.user
+      });
+    }
+
+    const record = {
+      createdAt: Date.now(),
+      issueTypeId: typeId,
+      pageUrl,
+      description,
+      stats: prompt.stats,
+      provider: answer.provider || settings.provider,
+      model: answer.model,
+      usage: answer.usage,
+      answer: answer.text,
+      agent: agentRun
+        ? { steps: agentRun.steps, iterations: agentRun.iterations, stoppedBecause: agentRun.stoppedBecause }
+        : null,
+      context,
+      prompt: prompt.user
+    };
+    await chrome.storage.local.set({ lastAnalysis: record });
+    return record;
+  } finally {
+    if (active) clearTimeout(active.timer);
     await session.detach();
     await setBadge(tabId, '');
     active = null;
   }
+}
 
-  const settings = await getSettings();
-  const pageUrl = await tabUrl(tabId);
-  const prompt = await buildPrompt({
-    issueTypeId: typeId,
-    description,
-    context,
-    pageUrl,
-    maxTokens: settings.maxPromptTokens
-  });
-
-  const apiKey = settings.apiKeys[settings.provider];
-  const answer = await complete({
-    provider: settings.provider,
-    model: settings.model,
-    apiKey,
-    system: prompt.system,
-    user: prompt.user
-  });
-
-  const record = {
-    createdAt: Date.now(),
-    issueTypeId: typeId,
-    pageUrl,
-    description,
-    stats: prompt.stats,
-    provider: answer.provider,
-    model: answer.model,
-    usage: answer.usage,
-    answer: answer.text,
-    context,
-    prompt: prompt.user
-  };
-  await chrome.storage.local.set({ lastAnalysis: record });
-  return record;
+/** Live investigation steps for the popup. Fails silently when it is closed. */
+function broadcastStep(step) {
+  chrome.runtime.sendMessage({ type: 'agent.step', step }).catch(() => {});
 }
 
 async function cancelCapture() {

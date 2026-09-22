@@ -60,6 +60,40 @@ export class CdpSession {
     }
   }
 
+  /**
+   * Reload the page and resolve once it has loaded (or after `timeoutMs`).
+   *
+   * Step one of the self-debug procedure: recording only catches what happens
+   * inside the capture window, and the SDK bundles plus the first API call
+   * normally happen at page load — i.e. before the engineer pressed Start.
+   * Reloading makes that evidence present instead of merely "not observed".
+   */
+  async reload({ timeoutMs = 15000 } = {}) {
+    await this.trySend('Page.enable');
+    const loaded = new Promise((resolve) => {
+      const done = () => {
+        this.listeners.delete(onEvent);
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const onEvent = (method) => {
+        if (method === 'Page.loadEventFired') done();
+      };
+      const timer = setTimeout(() => {
+        this.listeners.delete(onEvent);
+        resolve(false);
+      }, timeoutMs);
+      this.listeners.add(onEvent);
+    });
+
+    const res = await this.trySend('Page.reload', { ignoreCache: false });
+    if (res && res.__error) return { reloaded: false, error: res.__error };
+    const completed = await loaded;
+    // Give the SDK a moment to initialise and fire its first call after load.
+    await new Promise((r) => setTimeout(r, completed ? 1200 : 400));
+    return { reloaded: true, loadEventFired: completed };
+  }
+
   /** Evaluate an expression in the page and return the JSON value. */
   async evaluate(expression) {
     const res = await this.trySend('Runtime.evaluate', {

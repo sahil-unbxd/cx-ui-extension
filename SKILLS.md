@@ -62,6 +62,85 @@ If any expected asset is missing or failed, say so as the first line of the answ
 
 ---
 
+## Self-Debug Procedure (SRP and PLP)
+
+The extension runs this procedure itself before the model sees anything, and
+reports the result as `context.selfDebug`. Each check is a deterministic
+pass/fail — **lead with them.** They are ordered upstream-first, so
+`selfDebug.summary.firstFailure` is the most likely root cause and later
+failures are often just its consequences. Do not restate a check as your own
+deduction; cite its `id` and quote its evidence.
+
+### Step 0 — did the capture see a full page load?
+`fresh_page_load`. The SDK bundles and the first API call happen at page load.
+If the engineer did not tick "Reload the page when capture starts", that
+evidence may be missing rather than absent — never conclude "the SDK did not
+load" from a capture with `reloaded: false`; ask for a recapture with reload on.
+
+### Step 1 — bundles and initialisation
+`sdk_assets_loaded`, then `sdk_initialised`. If the SDK never initialised,
+compare the page-detection condition against `renderedPage.bodyClasses`
+(Magento: `catalog-category-view`; Shopify: `template-collection`). Stop here —
+nothing downstream is meaningful.
+
+### Step 2 — is the page running as the right type?
+`page_type_matches_endpoint` compares `getProductType()` with the endpoint that
+actually fired. `SEARCH` on a category page is why a PLP shows search results.
+
+### Step 3 — did the shopper's query reach the API?
+`search_query_reaches_api`. Two different parameter names are involved and
+confusing them is the classic mistake:
+
+- **The page URL** uses a *configurable* name, resolved from
+  `url.searchQueryParam.keyReplacer` — `q` by default, but customers rename it
+  to `searchTerm`, `keyword`, `query`, … The check reads the real name by
+  calling the SDK's own `getSearchQueryParam()`; never assume `q`.
+- **The Unbxd API endpoint always takes `q`** (`/search?q=red`).
+
+So the check is: the value of the configured URL param must arrive as the API's
+`q`. `q=*` (match-all) while the URL carries a real term means the query never
+reached the SDK — almost always because the configured `searchQueryParam` is
+not the param the site actually puts the term in.
+
+### Step 4 — is a browse page asking for the right category?
+`browse_target_matches_analytics_conf`. For CATEGORY/BROWSE the target comes
+from `window.UnbxdAnalyticsConf.page` — the SDK's default `getCategoryId()`
+returns exactly `encodeURIComponent(window.UnbxdAnalyticsConf.page)`, and
+`setCategoryId()` writes it back as `categoryPath:"A>B>C"`. That value must be
+what the `p=` parameter carries (the browse param name is itself configurable
+via `url.browseQueryParam.keyReplacer`, default `p`). Two failure modes:
+`UnbxdAnalyticsConf` missing entirely (category undefined, and browse analytics
+dead too), or `p=` pointing at a different category than the page represents —
+usually `UnbxdAnalyticsConf` being assigned after SDK init rather than before.
+
+### Step 5 — attribute mapping
+`attribute_mapping_matches_response` diffs the fields the config maps
+(`products.attributesMap` values, `productAttributes`) and the fields the
+request asked for (`fields=`) against the field names actually present on the
+returned products. A mapped field missing from the response means the template
+reads `undefined` — blank tiles, placeholder images. `missingMapped` is a
+config bug (wrong field name, or absent from `fields=`); `missingRequested`
+alone is usually a catalogue/indexing gap.
+
+### Step 6 — rendering
+`config_selectors_resolve`, then `api_results_rendered`. A config selector with
+`matchCount: 0` is the usual cause of an empty grid; the entry's `configPath`
+is the exact key to fix. Products returned but no DOM nodes = rendering
+problem; zero returned = go back to steps 3–4.
+
+### Step 7 — hygiene
+`single_api_call` (double init, duplicate script tag, or a manual
+`getResults()`/`getCategoryPage()` on top of the automatic one) and
+`site_key_consistent`.
+
+### How to answer with this
+Name the first failing check and quote its evidence values in **Evidence**. If
+every check passes and the engineer still reports a problem, say so plainly —
+the fault is then in something not covered here (catalogue content, ranking
+config, or a symptom that needs a different issue type — and say which).
+
+---
+
 ## Config Bundle Review (SRP and PLP)
 
 SRP and PLP captures additionally include `siteConfig`, a review of the

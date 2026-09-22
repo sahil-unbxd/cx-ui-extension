@@ -16,6 +16,7 @@ import { redactUrl, redactedParams, shapeOf, truncate } from './redact.js';
 import { unbxdApiKind, isUnbxdHost } from '../shared/unbxd-endpoints.js';
 import { captureSdkAssets } from './sdk-assets.js';
 import { captureSiteConfig } from './site-config.js';
+import { runSelfDebug } from './self-debug.js';
 
 /* --------------------------------------------------------------------- */
 /* Proxy / VPN / access                                                    */
@@ -270,7 +271,7 @@ function srpApiKind(r) {
  * problems over the same two endpoints. `prefer` decides which endpoint wins
  * when a page fired both (a category page that also runs a search widget).
  */
-async function captureResultsPage(session, recorder, { prefer, includeSiteConfig = true } = {}) {
+async function captureResultsPage(session, recorder, { prefer, includeSiteConfig = true, reloaded = false } = {}) {
   const all = recorder.all().filter((r) => srpApiKind(r));
   const preferred = prefer ? all.filter((r) => srpApiKind(r) === prefer) : [];
   const candidates = preferred.length ? preferred : all;
@@ -306,33 +307,53 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
     };
   })()`);
 
+  const searchRequest = primary
+    ? {
+        url: primary.url,
+        apiType: srpApiKind(primary),
+        method: primary.method,
+        params: redactedParams(primary.rawUrl),
+        status: primary.status,
+        failed: primary.failed,
+        errorText: primary.errorText,
+        durationMs: primary.durationMs,
+        responseHeaders: primary.responseHeaders
+      }
+    : null;
+
+  const apiCallCounts = {
+    search: all.filter((r) => srpApiKind(r) === 'search').length,
+    category: all.filter((r) => srpApiKind(r) === 'category').length,
+    note: 'More than one call per page load points at double initialisation or a manual getResults()/getCategoryPage() on top of the automatic one.'
+  };
+
+  const siteConfig = includeSiteConfig ? await captureSiteConfig(session, recorder, { includeCss: true }) : undefined;
+
+  // The self-debug pass runs last: it reads the live SDK and turns everything
+  // above into ordered pass/fail verdicts, so the model leads with a diagnosis
+  // instead of re-deriving one from raw data.
+  const selfDebug = await runSelfDebug(session, {
+    sdkAssets: captureSdkAssets(recorder),
+    siteConfig,
+    searchRequest,
+    responseSummary: response,
+    renderedPage: rendered,
+    apiCallCounts,
+    reloaded
+  });
+
   return {
-    searchRequest: primary
-      ? {
-          url: primary.url,
-          apiType: srpApiKind(primary),
-          method: primary.method,
-          params: redactedParams(primary.rawUrl),
-          status: primary.status,
-          failed: primary.failed,
-          errorText: primary.errorText,
-          durationMs: primary.durationMs,
-          responseHeaders: primary.responseHeaders
-        }
-      : null,
+    selfDebug,
+    searchRequest,
     searchRequestFound: Boolean(primary),
-    apiCallCounts: {
-      search: all.filter((r) => srpApiKind(r) === 'search').length,
-      category: all.filter((r) => srpApiKind(r) === 'category').length,
-      note: 'More than one call per page load points at double initialisation or a manual getResults()/getCategoryPage() on top of the automatic one.'
-    },
+    apiCallCounts,
     otherSearchCalls: candidates
       .slice(0, -1)
       .map((r) => ({ url: r.url, apiType: srpApiKind(r), status: r.status }))
       .slice(-5),
     responseSummary: response,
     renderedPage: rendered,
-    siteConfig: includeSiteConfig ? await captureSiteConfig(session, recorder, { includeCss: true }) : undefined,
+    siteConfig,
     failedRequests: recorder.problems().slice(0, 8).map(compactRequest),
     consoleErrors: [...recorder.consoleEntries, ...recorder.pageErrors]
       .filter((c) => c.level === 'error')
@@ -340,14 +361,16 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
   };
 }
 
-const captureSrp = (session, recorder) => captureResultsPage(session, recorder, { prefer: 'search' });
-const capturePlp = (session, recorder) => captureResultsPage(session, recorder, { prefer: 'category' });
+const captureSrp = (session, recorder, options = {}) =>
+  captureResultsPage(session, recorder, { prefer: 'search', reloaded: options.reloaded });
+const capturePlp = (session, recorder, options = {}) =>
+  captureResultsPage(session, recorder, { prefer: 'category', reloaded: options.reloaded });
 
 /**
  * Turn a search response body into counts + shape. The catalogue data itself
  * (titles, prices, images) is never forwarded — only field names and counts.
  */
-function summariseSearchResponse(bodyResult) {
+export function summariseSearchResponse(bodyResult) {
   if (!bodyResult || bodyResult.__error) {
     return { available: false, reason: bodyResult ? bodyResult.__error : 'no body' };
   }

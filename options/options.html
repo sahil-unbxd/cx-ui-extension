@@ -36,6 +36,10 @@
     <span>Prompt token budget <small>captured context is shrunk to fit</small></span>
     <input id="max-tokens" type="number" min="2000" max="60000" step="1000" />
   </label>
+  <label class="check">
+    <input type="checkbox" id="agent-mode" />
+    <span>Agent mode <small>— the model investigates with tools over the live page (keeps the debugger attached for the duration, costs more tokens, usually a better answer)</small></span>
+  </label>
 
   <div class="actions">
     <button id="save" class="primary">Save</button>

@@ -11,12 +11,15 @@ for a root cause they can paste into a ticket.
 popup (Debug tab)                 service worker                      provider
   issue type + description  ──▶  capture.start  ──▶ chrome.debugger.attach
                                                      Recorder: network (always) + console
+                                                 ──▶ Page.reload (opt-in, default on)
   (engineer reproduces the bug on the page)
   Stop & analyse            ──▶  capture.stop   ──▶ captureSdkAssets(recorder)  [every issue type]
                                                  ──▶ strategy(issueType)  [DOM/CSS, or search/category API]
-                                                 ──▶ detach (always)
+                                                 ──▶ runSelfDebug()  [SRP/PLP: ordered pass/fail verdicts]
                                                  ──▶ buildPrompt(template + SKILLS.md + budgeted JSON)
-                                                 ──▶ llm/client.complete() ───────────▶ Anthropic / OpenAI
+                                                 ──▶ agent mode: runAgentLoop() ⇄ toolbox over LIVE session
+                                                     one-shot mode: client.complete()  ──▶ Anthropic / OpenAI
+                                                 ──▶ detach (always, in finally)
   render answer + copy      ◀──  record (stored as `lastAnalysis`)
 ```
 
@@ -37,6 +40,9 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
 | Network + console recording | `src/capture/recorder.js` |
 | **Shared "validate first" SDK-asset check (all issue types)** | `src/capture/sdk-assets.js` |
 | **Customer config bundle review (SRP/PLP)** | `src/capture/site-config.js` |
+| **Self-debug checks (deterministic verdicts)** | `src/capture/self-debug.js` |
+| **MCP-style tool surface (agent mode)** | `src/capture/toolbox.js` |
+| **Agentic investigation loop** | `src/llm/agent.js` |
 | **Per-issue-type capture** | `src/capture/strategies.js` |
 | **Redaction (privacy boundary)** | `src/capture/redact.js` |
 | **Per-issue-type prompt templates** | `src/prompt/templates.js` |
@@ -72,6 +78,16 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
   forwards load status/timing for known Unbxd asset URLs only, never page data, so
   it doesn't reopen the per-type boundary. Don't widen it into a general network
   dump for the DOM-only issue type.
+- **The self-debug checks are deterministic, and must stay that way.**
+  `self-debug.js` answers the questions a CX engineer would otherwise run by
+  hand, and the popup shows its verdicts independently of the LLM. Checks are
+  ordered upstream-first so `summary.firstFailure` means something; adding one
+  in the wrong position breaks that contract. Never assume a parameter name the
+  SDK can resolve for you: the page URL's query param comes from
+  `getSearchQueryParam()` (`q` by default, often `searchTerm`/`keyword`) and the
+  browse param from `getBrowseQueryParam()` (`p`), while the API endpoint itself
+  always takes `q`. A check that cannot apply returns `skip`, never `pass` —
+  a false pass is worse than no check.
 - **Config review extracts, it never dumps.** `site-config.js` fetches the
   customer's `{siteKey}_search.js` (~350KB minified, SDK library + config +
   their templates) and `_search.css`. The file text must never reach a prompt —
@@ -89,6 +105,18 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
   recs widgets, ads, third-party scripts) is noise and must never be treated as
   "the" search/category call — use `unbxdApiKind()`/`unbxdAssetKind()`/`isUnbxdHost()`
   rather than re-deriving a URL pattern in a strategy.
+- **Agent mode holds the debugger open; detach is still non-negotiable.** In
+  agent mode the session stays attached *through* the LLM loop so tools observe
+  the live page — so the detach moved into a `finally` around the whole analysis
+  phase, with `ANALYSIS_GUARD_MS` as the backstop if the loop hangs. Any new code
+  path in `stopAndAnalyse` must keep both. The loop is bounded on purpose
+  (iteration cap, wall-clock budget, size-capped tool results); those bounds are
+  the engineer's token bill, not decoration.
+- **Tools inherit the redaction boundary.** `toolbox.js` is a second way out of
+  the browser and gets the same rules as the one-shot path: response bodies go
+  through `summariseSearchResponse`, never raw; `evaluate_js` refuses cookie
+  access and outbound fetches. A new tool that returns something the one-shot
+  path would have redacted is a bug, not a feature.
 - **Issue type is chosen by the engineer.** No auto-detection in v1. If you add it,
   it must be a suggestion the engineer can override, not a silent switch.
 

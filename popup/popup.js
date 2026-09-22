@@ -56,6 +56,11 @@ function onIssueTypeChange() {
 }
 $('issue-type').addEventListener('change', onIssueTypeChange);
 
+// Toggling in the popup is a real preference change, not a per-run override.
+$('agent-mode').addEventListener('change', () => {
+  saveSettings({ agentMode: $('agent-mode').checked }).catch(() => {});
+});
+
 function setRecording(on, startedAt) {
   state.recording = on;
   $('start').hidden = on;
@@ -76,7 +81,12 @@ function setRecording(on, startedAt) {
 
 $('start').addEventListener('click', async () => {
   try {
-    await send({ type: 'capture.start', tabId: state.tabId, issueTypeId: $('issue-type').value });
+    await send({
+      type: 'capture.start',
+      tabId: state.tabId,
+      issueTypeId: $('issue-type').value,
+      reload: $('reload-on-start').checked
+    });
     $('result').hidden = true;
     setRecording(true, Date.now());
   } catch (err) {
@@ -94,12 +104,15 @@ $('stop').addEventListener('click', async () => {
   const stop = $('stop');
   stop.disabled = true;
   clearInterval(state.ticker);
-  setStatus('Capturing context and asking the model…');
+  setStatus($('agent-mode').checked
+    ? 'Capturing context, then investigating with tools…'
+    : 'Capturing context and asking the model…');
   try {
     const record = await send({
       type: 'capture.stop',
       issueTypeId: $('issue-type').value,
       description: $('description').value,
+      agentMode: $('agent-mode').checked,
       options: {
         inputSelector: $('input-selector').value.trim() || null,
         dropdownSelector: $('dropdown-selector').value.trim() || null
@@ -116,6 +129,56 @@ $('stop').addEventListener('click', async () => {
   }
 });
 
+/* ---------- live investigation trace ---------- */
+// The service worker streams tool calls while the model investigates, so the
+// engineer can watch it work instead of staring at a spinner.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || msg.type !== 'agent.step') return;
+  const step = msg.step;
+  if (step.type === 'tool_start') {
+    setStatus(`Investigating — ${step.name}(${summariseArgs(step.input)})`);
+  } else if (step.type === 'thought' && step.text) {
+    setStatus(`Investigating — ${step.text.slice(0, 120)}`);
+  }
+});
+
+function summariseArgs(input) {
+  if (!input || !Object.keys(input).length) return '';
+  return Object.entries(input)
+    .map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`)
+    .join(', ')
+    .slice(0, 80);
+}
+
+function renderTrace(agent) {
+  const box = $('trace-box');
+  const list = $('trace');
+  list.textContent = '';
+  const steps = (agent && agent.steps) || [];
+  const toolSteps = steps.filter((s) => s.type === 'tool');
+  if (!toolSteps.length) {
+    box.hidden = true;
+    return;
+  }
+  $('trace-count').textContent = String(toolSteps.length);
+  for (const s of steps) {
+    const row = document.createElement('div');
+    row.className = 'trace-step';
+    if (s.type === 'tool') {
+      const name = document.createElement('code');
+      name.textContent = s.name;
+      const args = document.createElement('span');
+      args.className = 'args';
+      args.textContent = ` ${summariseArgs(s.input)}`;
+      row.append(name, args);
+    } else {
+      row.textContent = s.text;
+    }
+    list.append(row);
+  }
+  box.hidden = false;
+}
+
 /** Splits the model's "**Fix prompt**" section out of the answer so it can be
  *  copied on its own — it is addressed to a coding agent, not to the ticket. */
 function splitFixPrompt(answer = '') {
@@ -127,8 +190,35 @@ function splitFixPrompt(answer = '') {
   };
 }
 
+/** The extension's own checks, shown above the model's answer — these are
+ *  deterministic, so the engineer can trust them independently of the LLM. */
+function renderVerdicts(context) {
+  const box = $('verdicts');
+  box.textContent = '';
+  const checks = context && context.selfDebug ? context.selfDebug.checks : null;
+  if (!checks || !checks.length) {
+    box.hidden = true;
+    return;
+  }
+  for (const c of checks) {
+    if (c.status === 'skip') continue;
+    const row = document.createElement('div');
+    row.className = 'verdict-row';
+    const tag = document.createElement('span');
+    tag.className = `tag ${c.status}`;
+    tag.textContent = c.status.toUpperCase();
+    const text = document.createElement('span');
+    text.textContent = c.status === 'pass' ? c.title : `${c.title} — ${c.detail}`;
+    row.append(tag, text);
+    box.append(row);
+  }
+  box.hidden = !box.childElementCount;
+}
+
 function renderResult(record) {
   $('result').hidden = false;
+  renderVerdicts(record.context);
+  renderTrace(record.agent);
   const { body, fixPrompt } = splitFixPrompt(record.answer || '');
   $('answer').textContent = body || '(empty response)';
   $('fix-prompt').textContent = fixPrompt;
@@ -139,7 +229,8 @@ function renderResult(record) {
     ? `${record.usage.input_tokens ?? record.usage.prompt_tokens ?? '?'} in / ${
         record.usage.output_tokens ?? record.usage.completion_tokens ?? '?'} out`
     : `~${record.stats.totalTokens} est. tokens`;
-  $('result-meta').textContent = `${record.model} · ${usage}`;
+  const agentBit = record.agent ? ` · ${record.agent.iterations} step${record.agent.iterations === 1 ? '' : 's'}` : '';
+  $('result-meta').textContent = `${record.model} · ${usage}${agentBit}`;
 }
 
 function wireCopy(buttonId, getText) {
@@ -226,6 +317,9 @@ async function refreshKeyWarning() {
 
   const settings = await getSettings();
   renderProviderOptions(settings);
+  // Reflect the stored preference rather than the HTML default, so a choice
+  // made on the options page actually holds.
+  $('agent-mode').checked = settings.agentMode !== false;
 
   const stored = await chrome.storage.local.get(['lastIssueType', 'lastAnalysis']);
   renderIssueTypes(stored.lastIssueType);
