@@ -454,3 +454,160 @@ function apiVsDomCheck(responseSummary, renderedPage) {
   }
   return { ...base, status: PASS, detail: `API returned ${returned} products and the DOM has product nodes (max selector count ${domMax}).`, evidence };
 }
+
+/* ====================================================================== */
+/* Autosuggest data self-debug ("box isn't showing popular products /      */
+/* keyword suggestions", as opposed to the alignment issue type)           */
+/* ====================================================================== */
+
+/**
+ * Reads the autosuggest widget's live state, if it can be found.
+ *
+ * Caveat, stated plainly rather than guessed past: unlike the search/category
+ * widget (which reliably exposes `window.unbxdSearch`), we do not have
+ * confirmed evidence of which global holds the autosuggest widget's live
+ * instance across customer bundles — the vanilla SDK sometimes ships it
+ * combined with search, sometimes separately. This tries the plausible
+ * locations and reports which one (if any) worked, instead of assuming one is
+ * right. Checks below that need it degrade to SKIP when none is found; the
+ * checks that carry the most diagnostic weight for "no popular products" (API
+ * triggered? count requested? products returned? rendered?) don't need it at
+ * all, so the procedure stays useful even when this comes back empty.
+ */
+export async function readAutosuggestSdkState(session) {
+  const fn = () => {
+    const tried = [];
+    const tryGet = (label, getter) => {
+      tried.push(label);
+      try {
+        const v = getter();
+        if (v) return { label, value: v };
+      } catch {
+        /* ignore */
+      }
+      return null;
+    };
+    const found =
+      tryGet('window.unbxdAutosuggest', () => window.unbxdAutosuggest) ||
+      tryGet('window.unbxdSearchInstances.autosuggest', () => window.unbxdSearchInstances && window.unbxdSearchInstances.autosuggest) ||
+      tryGet('window.unbxdSearch.autosuggest', () => window.unbxdSearch && window.unbxdSearch.autosuggest) ||
+      null;
+    return {
+      instanceFound: Boolean(found),
+      instanceLocation: found ? found.label : null,
+      locationsTried: tried,
+      optionsKeys: found && found.value && found.value.options ? Object.keys(found.value.options).slice(0, 40) : null
+    };
+  };
+  return (await session.evaluate(`(${fn.toString()})()`)) || { instanceFound: false, unavailable: true };
+}
+
+function domHasProductLikeNodes(rendered) {
+  const counts = (rendered && rendered.popularProductNodeCounts) || {};
+  return Object.values(counts).some((n) => typeof n === 'number' && n > 0);
+}
+
+export async function runAutosuggestSelfDebug(session, input) {
+  const { sdkAssets, autosuggestRequest, responseSummary, rendered, reloaded } = input;
+  const sdk = await readAutosuggestSdkState(session);
+  const checks = [];
+  const add = (id, title, status, detail, evidence) => checks.push({ id, title, status, detail, evidence });
+
+  add(
+    'fresh_page_load',
+    'Capture covered a full page load',
+    reloaded ? PASS : WARN,
+    reloaded
+      ? 'The page was reloaded at the start of the capture, so bundle-load evidence is complete.'
+      : 'The page was not reloaded during capture — bundle-load evidence may be incomplete rather than genuinely absent.',
+    { reloaded: Boolean(reloaded) }
+  );
+
+  const assetVerdict = sdkAssets ? sdkAssets.verdict : 'not_observed';
+  const detectedKinds = sdkAssets ? Object.keys(sdkAssets.detected || {}) : [];
+  const hasAutosuggestAsset = detectedKinds.includes('autosuggest.js') || detectedKinds.includes('sdk.js');
+  add(
+    'autosuggest_bundle_loaded',
+    'autosuggest.js (or the combined SDK bundle) loaded',
+    assetVerdict === 'load_failed' ? FAIL : hasAutosuggestAsset ? PASS : WARN,
+    hasAutosuggestAsset
+      ? 'An autosuggest-specific or combined SDK bundle was observed loading successfully.'
+      : 'No autosuggest.js (or combined) bundle was observed during this capture. Recapture with reload on to confirm before concluding the script is missing.',
+    { verdict: assetVerdict, detected: detectedKinds }
+  );
+
+  add(
+    'autosuggest_api_triggered',
+    'Autosuggest API call fired',
+    autosuggestRequest ? PASS : FAIL,
+    autosuggestRequest
+      ? `Call recorded: ${autosuggestRequest.url}`
+      : 'No autosuggest API call was recorded while typing in the search box. Check the input-event binding (keyup/input), the minimum-character threshold, and any debounce in the widget config — the API was never asked, so no product data can appear regardless of catalogue content.',
+    { found: Boolean(autosuggestRequest) }
+  );
+
+  const requestedCountRaw = autosuggestRequest && autosuggestRequest.params ? autosuggestRequest.params['popularProducts.count'] : undefined;
+  const requestedCount = requestedCountRaw != null && requestedCountRaw !== '[redacted]' ? Number(requestedCountRaw) : null;
+  add(
+    'popular_products_requested',
+    'popularProducts.count requested is > 0',
+    !autosuggestRequest ? SKIP : requestedCount > 0 ? PASS : FAIL,
+    !autosuggestRequest
+      ? 'No request to check.'
+      : requestedCount > 0
+        ? `Request asked for ${requestedCount} popular product(s).`
+        : `popularProducts.count is "${requestedCountRaw ?? 'absent'}" in the request — the widget never asks the API for popular products at all, regardless of catalogue data. This is a config value in the autosuggest widget options (popularProducts.count), not a data or rendering problem.`,
+    { requestedCountRaw, params: autosuggestRequest ? autosuggestRequest.params : null }
+  );
+
+  const ppSection = responseSummary && responseSummary.sections ? responseSummary.sections.popularProducts : null;
+  const returnedCount = ppSection ? ppSection.count : null;
+  const responseUsable = responseSummary && responseSummary.parsed;
+  add(
+    'popular_products_returned',
+    'API response contains popular products',
+    !autosuggestRequest || requestedCount === null || requestedCount <= 0
+      ? SKIP
+      : !responseUsable
+        ? WARN
+        : returnedCount > 0
+          ? PASS
+          : FAIL,
+    !responseUsable
+      ? 'Response was not JSON — escalate to the access/proxy playbook rather than assuming a config problem.'
+      : returnedCount > 0
+        ? `Response contains ${returnedCount} popular product(s).`
+        : `Requested ${requestedCount ?? '?'} popular product(s) but the response's popularProducts section is empty or absent. Prime suspect: popularProducts.filter ("${(responseSummary && responseSummary.requestedPopularProductsFilter) ?? 'none'}") excludes every product for this catalogue/locale/market — or an indexing gap on the Unbxd platform side. This is a config or catalogue issue, not a widget bug.`,
+    {
+      popularProductsSection: ppSection,
+      requestedFilter: responseSummary ? responseSummary.requestedPopularProductsFilter : null,
+      responseTopLevelKeys: responseSummary ? responseSummary.topLevelKeys : null
+    }
+  );
+
+  add(
+    'popular_products_rendered',
+    'Returned popular products appear in the DOM',
+    !returnedCount ? SKIP : domHasProductLikeNodes(rendered) ? PASS : FAIL,
+    !returnedCount
+      ? 'API returned no products to render — nothing to check here.'
+      : domHasProductLikeNodes(rendered)
+        ? 'Product-like nodes were found inside the autosuggest dropdown.'
+        : 'The API returned popular products but no product-like nodes are in the dropdown. This is a template/rendering problem in autosuggest.js (wrong container selector, a template function error, or a field the template reads that the response does not have) — not a data problem.',
+    { popularProductNodeCounts: rendered ? rendered.popularProductNodeCounts : null, dropdownFound: rendered ? rendered.dropdownFound : null }
+  );
+
+  const failures = checks.filter((c) => c.status === FAIL);
+  return {
+    sdkState: sdk,
+    checks,
+    summary: {
+      failed: failures.length,
+      warned: checks.filter((c) => c.status === WARN).length,
+      passed: checks.filter((c) => c.status === PASS).length,
+      skipped: checks.filter((c) => c.status === SKIP).length,
+      firstFailure: failures.length ? { id: failures[0].id, title: failures[0].title, detail: failures[0].detail } : null,
+      allFailedIds: failures.map((c) => c.id)
+    }
+  };
+}

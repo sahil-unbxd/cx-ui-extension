@@ -19,13 +19,19 @@ Section headings are matched case-insensitively but otherwise exactly. Renaming 
 heading without updating `skillsSection` silently drops the playbook from the
 prompt.
 
-Two sections below are **not** tied to a single issue type, and their headings
-are hardcoded in `src/prompt/builder.js`. Rename them there too if you rename
-them here:
+Several sections below are **not** tied to a single issue type, and their
+headings are hardcoded in `src/prompt/builder.js`. Rename them there too if you
+rename them here:
 
 - **"SDK Asset Validation (All Issue Types)"** — prepended to every prompt.
-- **"Config Bundle Review (SRP and PLP)"** — added for any issue type whose
+- **"Config Bundle Review"** — added for any issue type whose
   `capture.siteConfig` is true.
+- **"Self-Debug Procedure (SRP and PLP)"** / **"Self-Debug Procedure
+  (Autosuggest Data)"** — added based on `capture.selfDebugKind`
+  (`'results_page'` / `'autosuggest_data'`). Each documents the checks its own
+  `src/capture/self-debug.js` function runs; both land in the same
+  `context.selfDebug` field, which is why the popup can render either one's
+  verdicts with the same code.
 
 ---
 
@@ -141,11 +147,75 @@ config, or a symptom that needs a different issue type — and say which).
 
 ---
 
-## Config Bundle Review (SRP and PLP)
+## Self-Debug Procedure (Autosuggest Data)
 
-SRP and PLP captures additionally include `siteConfig`, a review of the
-customer's `{siteKey}_search.js` / `_search.css` bundle. Most SRP/PLP tickets
-are resolved here rather than in the API response.
+Runs for the Autosuggest Data issue type and reports as `context.selfDebug`,
+same shape and same rule as the results-page procedure above: lead with
+`selfDebug.summary.firstFailure`, cite check ids and evidence, don't re-derive
+what a check already answered.
+
+This is a **different symptom class from Autosuggest Alignment.** Alignment is
+"the box is in the wrong place"; this is "the box is empty or wrong" — no DOM
+geometry is captured here, and no API data is captured for alignment. If an
+engineer describes a positioning problem, they picked the wrong issue type;
+say so rather than trying to answer it from this context.
+
+### The checks, in order
+1. **`fresh_page_load`** — same caveat as the results-page procedure: without a
+   reload, "bundle not observed" is not proof it's missing.
+2. **`autosuggest_bundle_loaded`** — from the shared `sdkAssets` check
+   (`autosuggest.js`/`autosuggest.css`, or a combined `sdk.js`/`sdk.css` that
+   serves both widgets from one file). `FAIL` only on an outright load failure;
+   "not observed" is a `WARN`, since the capture may simply not have caught it.
+3. **`autosuggest_api_triggered`** — did typing in the search box fire the
+   `/autosuggest` call at all? If not, nothing below matters: check the
+   input-event binding, the minimum-character threshold, and any debounce.
+4. **`popular_products_requested`** — the single most common root cause for
+   "no popular products": `popularProducts.count` in the actual request. Zero
+   or absent means the widget configuration never asks the API for this data —
+   full stop, regardless of what the catalogue contains. (The same pattern
+   applies to `keywordSuggestions.count` / `topQueries.count` if the engineer's
+   description is about those instead; read the request params directly.)
+5. **`popular_products_returned`** — count requested vs. count actually in
+   `responseSummary.sections.popularProducts`. A gap here, with a count > 0
+   requested, points first at `popularProducts.filter` — read its value
+   (`responseSummary.requestedPopularProductsFilter`) and consider whether it
+   excludes every product for the current catalogue/market/locale (a common
+   pattern: a market filter like `available_markets:AU` evaluated on a site
+   visited from the wrong region, or simply misconfigured for this catalogue).
+   `responseSummary.parsed: false` escalates to the access/proxy playbook
+   instead.
+6. **`popular_products_rendered`** — only reached once the API is confirmed to
+   return products: does `rendered.popularProductNodeCounts` show anything
+   inside the dropdown? A `FAIL` here is a template/container-selector problem
+   in `autosuggest.js`, not a data problem — don't conflate the two.
+
+### A note on `sdkState`
+Unlike the search/category widget (`window.unbxdSearch`, reliable), we do not
+have confirmed evidence of a single global that always holds the autosuggest
+widget's live instance — bundles vary. `sdkState.locationsTried` lists what was
+checked; `sdkState.instanceFound: false` is common and, by itself, proves
+nothing — the checks above answer the question without needing it. Don't
+manufacture a root cause out of that absence.
+
+### Response shape honesty
+`responseSummary.sections` is built from the response param names confirmed in
+a real production request (`popularProducts`, `keywordSuggestions`,
+`topQueries`, `promotedSuggestion`), but the exact JSON shape of the response
+itself has not been captured and pinned down. If a section comes back empty
+when the engineer says otherwise, check `responseSummary.topLevelKeys` /
+`responseKeys` directly — that's ground truth; the section parsing is a
+best-effort convenience on top of it, not the last word.
+
+---
+
+## Config Bundle Review
+
+SRP, PLP and Autosuggest-data captures additionally include `siteConfig`, a
+review of whichever customer bundle is relevant — `{siteKey}_search.js` /
+`_search.css` for SRP/PLP, `{siteKey}_autosuggest.js` / `_autosuggest.css` for
+autosuggest data issues. Most tickets in any of these three types are resolved
+here rather than in the API response alone.
 
 **Read `siteConfig.liveConfig`, not the bundle text.** That bundle is the whole
 vanilla search library *plus* the customer's config *plus* their template
@@ -256,6 +326,80 @@ Layout only (`capture.domGeometry`, `capture.console`): CDP box models for the a
 
 ### Fix pattern to suggest
 Fix the containing block before touching offsets: give the input's immediate wrapper `position: relative` and make the dropdown its absolutely-positioned child, so the dropdown inherits the input's width via `width: 100%` and `box-sizing: border-box`. If a clipping ancestor cannot be changed, portal the dropdown to `document.body` and position it from the input's rect, recomputed on `scroll`/`resize`. For stacking issues, raise or neutralise the ancestor that creates the context — raising the dropdown's own `z-index` will not work. Prefer a scoped CSS fix in the customer's stylesheet over patching the widget, and give the exact selector and declarations.
+
+---
+
+## Autosuggest Data Issues
+
+Distinct from **Autosuggest Alignment Issues** above: this is "the dropdown is
+in the right place but is empty or shows the wrong thing", not "the dropdown is
+mispositioned". Picking the wrong one of the two gets the wrong capture
+strategy — this type captures the API call and the config bundle, never DOM
+geometry.
+
+### Symptoms to recognise
+- Popular products section is empty when the customer expects it to show items.
+- Keyword suggestions or top queries missing, or showing stale/irrelevant terms.
+- The dropdown opens (so it's not an alignment problem) but only shows some
+  sections and not others — e.g. keyword suggestions appear but popular
+  products don't.
+- Works for some queries/markets/locales and not others.
+
+### What context to capture
+The actual `autosuggest` call (`capture.searchApi`, `capture.network`,
+`capture.console`, `capture.siteConfig`) — reference shape confirmed from a
+real production request:
+
+```
+https://search.unbxd.io/{apiKey}/{siteKey}/autosuggest?q=*&topQueries.count=5
+  &keywordSuggestions.count=6&popularProducts.count=4&promotedSuggestion.count=0
+  &popularProducts.fields=title,price,imageUrl,productUrl,...
+  &popularProducts.filter=available_markets:AU&variants=true
+```
+
+Capture: the request params exactly as sent (the `*.count` and `*.filter`
+values are the ones that matter), response section counts and shape (never
+product values), whether the dropdown rendered product-like nodes, and a
+review of the `{siteKey}_autosuggest.js` / `_autosuggest.css` bundle (same
+`siteConfig` mechanism as SRP/PLP — see "Config Bundle Review"). No DOM
+geometry, no box models.
+
+### Common root causes, most likely first
+1. **`popularProducts.count` (or the equivalent for the missing section) is 0
+   or absent in the request** — the widget config never asks the API for that
+   data. Nothing about the catalogue or the API matters until this is fixed.
+   This is the most common cause of exactly "autosuggest isn't showing popular
+   products" and is the first thing `popular_products_requested` in the
+   self-debug procedure checks.
+2. **`popularProducts.filter` excludes everything for this catalogue/market** —
+   e.g. a market/locale filter (`available_markets:AU`) that doesn't match the
+   catalogue being queried, or a stale filter left over from a copy-pasted
+   config. Count requested, count returned is 0.
+3. **Autosuggest API never triggers** — event binding, minimum-character
+   threshold, or debounce prevents the call from firing at all. Distinguish
+   from (1)/(2) by checking whether the request exists at all first.
+4. **`autosuggest.js` (or the combined bundle) didn't load** — check
+   `sdkAssets` before anything else; see the shared SDK Asset Validation
+   section. A widget that never loaded can't have a "normal" version of this bug.
+5. **API returns products, dropdown shows nothing** — a rendering/template
+   problem in `autosuggest.js`: wrong container selector, a template function
+   error (check `consoleErrors`), or a field the template reads that the
+   response doesn't have. Confirm the API side first — don't guess at a
+   template bug when the real problem is (1) or (2).
+6. **Right section, wrong scope** — keyword suggestions and top queries work
+   but popular products specifically don't (or vice versa): each section has
+   its own independent `*.count`/`*.filter` params, so check the one that's
+   actually broken rather than assuming a config problem in general.
+
+### Fix pattern to suggest
+Name the exact request param and its value (`popularProducts.count=0` →
+`popularProducts.count=4`, or the filter value to relax/correct), say the
+change belongs in the customer's `{siteKey}_autosuggest.js` widget config
+(CX engineer edits and redeploys the bundle), and state what the engineer
+should see after the change (e.g. "N popular products in the dropdown for a
+match-all query"). If the cause is catalogue/indexing (the filter is correct
+but the catalogue genuinely has no matching products for this market), say so
+plainly instead of proposing a config change that won't fix anything.
 
 ---
 

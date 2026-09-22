@@ -12,16 +12,25 @@ import { fitJson, estimateTokens } from './budget.js';
 const SDK_VALIDATION_HEADING = 'SDK Asset Validation (All Issue Types)';
 // Injected only for issue types whose capture reviews the customer's config
 // bundle (capture.siteConfig) — it documents the `siteConfig` context block.
-const CONFIG_REVIEW_HEADING = 'Config Bundle Review (SRP and PLP)';
+// Generic on purpose: it covers whichever bundle got reviewed (search.js,
+// autosuggest.js, ...), not just SRP/PLP.
+const CONFIG_REVIEW_HEADING = 'Config Bundle Review';
 // The deterministic checks the extension runs on itself before the model sees
-// anything; paired with capture.siteConfig because the same issue types run it.
-const SELF_DEBUG_HEADING = 'Self-Debug Procedure (SRP and PLP)';
+// anything (context.selfDebug). Which specific playbook applies depends on
+// capture.selfDebugKind, since "results page" and "autosuggest data" run
+// different checks over different data.
+const SELF_DEBUG_HEADINGS = {
+  results_page: 'Self-Debug Procedure (SRP and PLP)',
+  autosuggest_data: 'Self-Debug Procedure (Autosuggest Data)'
+};
 
 export async function buildPrompt({ issueTypeId, description, context, pageUrl, maxTokens = 12000 }) {
   const type = getIssueType(issueTypeId);
   const template = getTemplate(type.id);
   const headings = [SDK_VALIDATION_HEADING];
-  if (type.capture && type.capture.siteConfig) headings.push(SELF_DEBUG_HEADING, CONFIG_REVIEW_HEADING);
+  const selfDebugHeading = type.capture && SELF_DEBUG_HEADINGS[type.capture.selfDebugKind];
+  if (selfDebugHeading) headings.push(selfDebugHeading);
+  if (type.capture && type.capture.siteConfig) headings.push(CONFIG_REVIEW_HEADING);
   headings.push(type.skillsSection);
 
   const sections = await Promise.all(headings.map((h) => getSkillSection(h)));

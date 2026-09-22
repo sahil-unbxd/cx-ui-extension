@@ -87,7 +87,17 @@ strategies still decide what, if anything, *beyond* that gets forwarded.
   `getSearchQueryParam()` (`q` by default, often `searchTerm`/`keyword`) and the
   browse param from `getBrowseQueryParam()` (`p`), while the API endpoint itself
   always takes `q`. A check that cannot apply returns `skip`, never `pass` —
-  a false pass is worse than no check.
+  a false pass is worse than no check. There are two self-debug playbooks
+  (`runSelfDebug` for results pages, `runAutosuggestSelfDebug` for autosuggest
+  data), selected by `capture.selfDebugKind` in `issue-types.js` and both
+  reported under the same `context.selfDebug` field so the popup's verdict
+  rendering works for either without special-casing. `runAutosuggestSelfDebug`
+  is honest about an unresolved question: unlike `window.unbxdSearch`, there is
+  no confirmed single global for the autosuggest widget's live instance across
+  customer bundles — it tries plausible locations and reports which one (if
+  any) worked (`sdkState.locationsTried`) rather than assuming. Don't silently
+  "fix" that uncertainty by picking one; if you get a confirmed answer, replace
+  the guesswork in `readAutosuggestSdkState` and say so in SKILLS.md.
 - **Config review extracts, it never dumps.** `site-config.js` fetches the
   customer's `{siteKey}_search.js` (~350KB minified, SDK library + config +
   their templates) and `_search.css`. The file text must never reach a prompt —

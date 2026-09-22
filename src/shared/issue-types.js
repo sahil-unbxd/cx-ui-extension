@@ -40,6 +40,22 @@ export const ISSUE_TYPES = {
       searchApi: false
     }
   },
+  autosuggest_data: {
+    id: 'autosuggest_data',
+    label: 'Autosuggest data issue (no/wrong suggestions)',
+    hint: 'Popular products, keyword suggestions or top queries missing/empty/wrong — not a positioning issue.',
+    skillsSection: 'Autosuggest Data Issues',
+    capture: {
+      network: true,
+      console: true,
+      domGeometry: false,
+      searchApi: true,
+      // Reviews the customer's {siteKey}_autosuggest.js/.css config bundle.
+      siteConfig: true,
+      // Which self-debug playbook/heading builder.js injects (see below).
+      selfDebugKind: 'autosuggest_data'
+    }
+  },
   srp_ui: {
     id: 'srp_ui',
     label: 'SRP (search results) UI issue',
@@ -51,7 +67,8 @@ export const ISSUE_TYPES = {
       domGeometry: false,
       searchApi: true,
       // Reviews the customer's {siteKey}_search.js/.css config bundle.
-      siteConfig: true
+      siteConfig: true,
+      selfDebugKind: 'results_page'
     }
   },
   plp_ui: {
@@ -64,7 +81,8 @@ export const ISSUE_TYPES = {
       console: true,
       domGeometry: false,
       searchApi: true,
-      siteConfig: true
+      siteConfig: true,
+      selfDebugKind: 'results_page'
     }
   }
 };

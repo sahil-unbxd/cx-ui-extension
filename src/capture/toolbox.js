@@ -15,11 +15,12 @@
  *   - responses are summarised to counts/shape by the same redaction helpers;
  *   - every result is size-capped so a tool loop cannot blow up the context.
  */
-import { summariseSearchResponse } from './strategies.js';
+import { summariseSearchResponse, summariseAutosuggestResponse } from './strategies.js';
 import { unbxdApiKind, unbxdAssetKind, isUnbxdHost } from '../shared/unbxd-endpoints.js';
 import { redactedParams, truncate } from './redact.js';
 import { captureSiteConfig } from './site-config.js';
-import { runSelfDebug } from './self-debug.js';
+import { captureSdkAssets } from './sdk-assets.js';
+import { runSelfDebug, runAutosuggestSelfDebug } from './self-debug.js';
 
 const MAX_RESULT_CHARS = 6000;
 /** Expressions that would exfiltrate credentials rather than debug a page. */
@@ -318,7 +319,7 @@ export function createToolbox({ session, recorder }) {
                    visibleNoResultsText: /no results|0 results/i.test(document.body.innerText.slice(0,20000)) };
         })()`);
         return runSelfDebug(session, {
-          sdkAssets: null,
+          sdkAssets: captureSdkAssets(recorder),
           siteConfig: cfg,
           searchRequest: apiReq
             ? { apiType: unbxdApiKind(apiReq.rawUrl), params: redactedParams(apiReq.rawUrl) }
@@ -326,6 +327,35 @@ export function createToolbox({ session, recorder }) {
           responseSummary,
           renderedPage: rendered,
           apiCallCounts: null,
+          reloaded: true
+        });
+      }
+    },
+
+    run_autosuggest_self_debug: {
+      description:
+        "Re-run the autosuggest-data check suite (distinct from run_self_debug, which is for search/category results pages): was the autosuggest API triggered, was popularProducts.count actually requested, did the response return products, and were they rendered in the dropdown. Use this — not run_self_debug — for \"autosuggest isn't showing popular products / keyword suggestions\" complaints.",
+      input_schema: { type: 'object', properties: {} },
+      run: async () => {
+        const apiReq = recorder.all().filter((r) => unbxdApiKind(r.rawUrl) === 'autosuggest').pop();
+        let requestedParams = {};
+        let responseSummary = null;
+        if (apiReq) {
+          requestedParams = redactedParams(apiReq.rawUrl);
+          const body = await session.trySend('Network.getResponseBody', { requestId: apiReq.requestId });
+          responseSummary = summariseAutosuggestResponse(body, requestedParams);
+        }
+        const rendered = await session.evaluate(`(() => {
+          const c = (s) => { try { return document.querySelectorAll(s).length; } catch { return 0; } };
+          return { dropdownFound: true, popularProductNodeCounts: { '[class*="product" i]': c('[class*="product" i]'), '[class*="popular" i]': c('[class*="popular" i]') } };
+        })()`);
+        return runAutosuggestSelfDebug(session, {
+          sdkAssets: captureSdkAssets(recorder),
+          autosuggestRequest: apiReq
+            ? { url: apiReq.url, params: requestedParams, status: apiReq.status, failed: apiReq.failed, errorText: apiReq.errorText }
+            : null,
+          responseSummary,
+          rendered,
           reloaded: true
         });
       }

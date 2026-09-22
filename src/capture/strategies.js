@@ -16,7 +16,7 @@ import { redactUrl, redactedParams, shapeOf, truncate } from './redact.js';
 import { unbxdApiKind, isUnbxdHost } from '../shared/unbxd-endpoints.js';
 import { captureSdkAssets } from './sdk-assets.js';
 import { captureSiteConfig } from './site-config.js';
-import { runSelfDebug } from './self-debug.js';
+import { runSelfDebug, runAutosuggestSelfDebug } from './self-debug.js';
 
 /* --------------------------------------------------------------------- */
 /* Proxy / VPN / access                                                    */
@@ -430,10 +430,144 @@ function safeAtob(b64) {
 }
 
 /* --------------------------------------------------------------------- */
+/* Autosuggest data (popular products / keyword suggestions missing)       */
+/* --------------------------------------------------------------------- */
+
+/**
+ * Sections of the autosuggest response, keyed by the request param prefix
+ * that controls them (popularProducts.count, keywordSuggestions.count, etc.
+ * — confirmed from a real production request; see SKILLS.md). We have not
+ * captured a live autosuggest *response* to pin down its exact JSON shape, so
+ * this stays tolerant of a few plausible shapes per section (a bare array, an
+ * object with .products, an object with .suggestions) and always reports
+ * topLevelKeys/responseKeys too — read those directly if a section here comes
+ * back empty when it shouldn't.
+ */
+const AUTOSUGGEST_SECTIONS = ['popularProducts', 'keywordSuggestions', 'topQueries', 'promotedSuggestion', 'inFields'];
+
+export function summariseAutosuggestResponse(bodyResult, requestedParams = {}) {
+  if (!bodyResult || bodyResult.__error) {
+    return { available: false, reason: bodyResult ? bodyResult.__error : 'no body' };
+  }
+  const raw = bodyResult.base64Encoded ? safeAtob(bodyResult.body) : bodyResult.body;
+  if (!raw) return { available: false, reason: 'empty body' };
+
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return {
+      available: true,
+      parsed: false,
+      byteLength: raw.length,
+      note: 'Response was not JSON — possibly an HTML error/challenge page.',
+      head: truncate(raw.replace(/\s+/g, ' '), 200)
+    };
+  }
+
+  const resp = json.response && typeof json.response === 'object' ? json.response : json;
+  const sections = {};
+  for (const name of AUTOSUGGEST_SECTIONS) {
+    const val = resp[name] ?? json[name];
+    if (val === undefined) continue;
+    const list = Array.isArray(val) ? val : Array.isArray(val?.products) ? val.products : Array.isArray(val?.suggestions) ? val.suggestions : null;
+    sections[name] = {
+      present: true,
+      isArray: Array.isArray(val),
+      count: Array.isArray(list) ? list.length : typeof val?.numberOfProducts === 'number' ? val.numberOfProducts : null,
+      sampleShape: list && list[0] ? shapeOf(list[0], 0, { maxDepth: 2, sampleStrings: false }) : val && typeof val === 'object' ? shapeOf(val, 0, { maxDepth: 2, sampleStrings: false }) : null
+    };
+  }
+
+  return {
+    available: true,
+    parsed: true,
+    byteLength: raw.length,
+    topLevelKeys: Object.keys(json).slice(0, 20),
+    responseKeys: resp !== json ? Object.keys(resp).slice(0, 20) : null,
+    sections,
+    requestedPopularProductsCount: requestedParams['popularProducts.count'] ?? null,
+    requestedPopularProductsFilter: requestedParams['popularProducts.filter'] ?? null,
+    errorField: json.error || json.message || null
+  };
+}
+
+async function captureAutosuggestData(session, recorder, options = {}) {
+  const candidates = recorder.all().filter((r) => unbxdApiKind(r.rawUrl) === 'autosuggest');
+  const primary = candidates[candidates.length - 1] || null;
+
+  let response = null;
+  let requestedParams = {};
+  if (primary) {
+    requestedParams = redactedParams(primary.rawUrl);
+    const body = await session.trySend('Network.getResponseBody', { requestId: primary.requestId });
+    response = summariseAutosuggestResponse(body, requestedParams);
+  }
+
+  // Scope the DOM check to the autosuggest dropdown when we can find it —
+  // reusing the alignment strategy's own candidate selectors — so a product
+  // grid elsewhere on the page (e.g. a "popular now" widget) doesn't produce
+  // a false PASS.
+  const rendered = await session.evaluate(`(() => {
+    const dropdownSelectors = ${JSON.stringify(DROPDOWN_CANDIDATES)};
+    let dropdown = null;
+    for (const sel of dropdownSelectors) {
+      try { dropdown = document.querySelector(sel); } catch { dropdown = null; }
+      if (dropdown) break;
+    }
+    const scope = dropdown || document;
+    const count = (sel) => { try { return scope.querySelectorAll(sel).length; } catch { return 0; } };
+    const productish = ['[class*="product" i]', '[class*="popular" i]', '[data-product-id]', '[class*="UNX" i]'];
+    const counts = {};
+    for (const sel of productish) counts[sel] = count(sel);
+    return {
+      dropdownFound: Boolean(dropdown),
+      dropdownVisible: dropdown ? dropdown.offsetWidth > 0 && dropdown.offsetHeight > 0 : false,
+      popularProductNodeCounts: counts
+    };
+  })()`);
+
+  const siteConfig = await captureSiteConfig(session, recorder, { includeCss: true });
+
+  const autosuggestRequest = primary
+    ? {
+        url: primary.url,
+        method: primary.method,
+        params: requestedParams,
+        status: primary.status,
+        failed: primary.failed,
+        errorText: primary.errorText,
+        durationMs: primary.durationMs,
+        responseHeaders: primary.responseHeaders
+      }
+    : null;
+
+  const selfDebug = await runAutosuggestSelfDebug(session, {
+    sdkAssets: captureSdkAssets(recorder),
+    autosuggestRequest,
+    responseSummary: response,
+    rendered,
+    reloaded: options.reloaded
+  });
+
+  return {
+    selfDebug,
+    autosuggestRequest,
+    autosuggestRequestFound: Boolean(primary),
+    responseSummary: response,
+    rendered,
+    siteConfig,
+    failedRequests: recorder.problems().slice(0, 8).map(compactRequest),
+    consoleErrors: [...recorder.consoleEntries, ...recorder.pageErrors].filter((c) => c.level === 'error').slice(-10)
+  };
+}
+
+/* --------------------------------------------------------------------- */
 
 const STRATEGIES = {
   proxy_access: captureProxy,
   autosuggest_alignment: captureAutosuggest,
+  autosuggest_data: captureAutosuggestData,
   srp_ui: captureSrp,
   plp_ui: capturePlp
 };

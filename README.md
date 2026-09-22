@@ -37,6 +37,7 @@ auth headers. See the Options page and `AGENTS.md` for the full boundary.
 |---|---|
 | Proxy / VPN / access | failed + blocked requests, CORS/DNS/TLS/geo signatures, browser environment |
 | Autosuggest alignment | box models and computed styles of the dropdown and its anchor input, clipping/stacking ancestors |
+| Autosuggest data | the `autosuggest` API request/response (popular products, keyword suggestions, top queries), whether they rendered, plus a review of `{siteKey}_autosuggest.js`/`.css` |
 | SRP UI | the `search` API request params and response counts/shape, what the DOM rendered, plus a review of the site's `{siteKey}_search.js` / `_search.css` config bundle |
 | PLP / category | the `category` API call, the page's URL/history state (dropped filters, back-button loop), plus the same config-bundle review |
 
