@@ -10,14 +10,21 @@ for a root cause they can paste into a ticket.
 ```
 popup (Debug tab)                 service worker                      provider
   issue type + description  ──▶  capture.start  ──▶ chrome.debugger.attach
-                                                     Recorder: network+console
+                                                     Recorder: network (always) + console
   (engineer reproduces the bug on the page)
-  Stop & analyse            ──▶  capture.stop   ──▶ strategy(issueType)  [DOM/CSS, search API]
+  Stop & analyse            ──▶  capture.stop   ──▶ captureSdkAssets(recorder)  [every issue type]
+                                                 ──▶ strategy(issueType)  [DOM/CSS, or search/category API]
                                                  ──▶ detach (always)
                                                  ──▶ buildPrompt(template + SKILLS.md + budgeted JSON)
                                                  ──▶ llm/client.complete() ───────────▶ Anthropic / OpenAI
   render answer + copy      ◀──  record (stored as `lastAnalysis`)
 ```
+
+Network recording is unconditional (see the comment on `Recorder` construction
+in `service-worker.js`): the `sdkAssets` check — "did search.js/autosuggest.js/
+their CSS load?" — runs for every issue type before anything issue-specific,
+because a broken SDK bundle explains almost any downstream symptom. Per-type
+strategies still decide what, if anything, *beyond* that gets forwarded.
 
 ## Where things live
 
@@ -25,8 +32,10 @@ popup (Debug tab)                 service worker                      provider
 |---|---|
 | Issue-type registry (the spine) | `src/shared/issue-types.js` |
 | Settings / provider registry | `src/shared/settings.js` |
+| Canonical Unbxd host/path patterns (API + SDK assets) | `src/shared/unbxd-endpoints.js` |
 | CDP attach/detach wrapper | `src/capture/cdp.js` |
 | Network + console recording | `src/capture/recorder.js` |
+| **Shared "validate first" SDK-asset check (all issue types)** | `src/capture/sdk-assets.js` |
 | **Per-issue-type capture** | `src/capture/strategies.js` |
 | **Redaction (privacy boundary)** | `src/capture/redact.js` |
 | **Per-issue-type prompt templates** | `src/prompt/templates.js` |
@@ -56,7 +65,19 @@ popup (Debug tab)                 service worker                      provider
 - **Capture strategies stay separated.** An SRP capture must not collect DOM
   geometry; an alignment capture must not collect API payloads. The `capture` flags
   in `issue-types.js` are the contract, and templates must only ask about what their
-  strategy actually captured.
+  strategy actually captured. The one shared exception is `sdkAssets`
+  (`src/capture/sdk-assets.js`): a fixed, small "did search.js/autosuggest.js/their
+  CSS load?" check that runs for every issue type regardless of these flags — it
+  forwards load status/timing for known Unbxd asset URLs only, never page data, so
+  it doesn't reopen the per-type boundary. Don't widen it into a general network
+  dump for the DOM-only issue type.
+- **Only search/category/autosuggest are "the" Unbxd API.** `src/shared/unbxd-endpoints.js`
+  is the single source of truth for matching `search.unbxd.io/{apiKey}/{siteKey}/
+  {search|category|autosuggest}` and the `libraries.unbxdapi.com` /
+  `sandbox.unbxd.io` asset hosts. Every other request the page makes (analytics,
+  recs widgets, ads, third-party scripts) is noise and must never be treated as
+  "the" search/category call — use `unbxdApiKind()`/`unbxdAssetKind()`/`isUnbxdHost()`
+  rather than re-deriving a URL pattern in a strategy.
 - **Issue type is chosen by the engineer.** No auto-detection in v1. If you add it,
   it must be a suggestion the engineer can override, not a silent switch.
 

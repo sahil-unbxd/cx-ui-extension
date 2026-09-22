@@ -59,7 +59,12 @@ async function startCapture({ tabId, issueTypeId }) {
   await session.attach();
 
   const recorder = new Recorder(session, {
-    network: type.capture.network || type.capture.searchApi,
+    // Network is recorded for every issue type, not just the ones whose
+    // capture.network flag is set: the "validate first" SDK-asset check
+    // (search.js/autosuggest.js/their CSS — see sdk-assets.js) runs
+    // unconditionally and needs it. Per-type strategies still decide what,
+    // if anything, beyond that gets forwarded into the prompt.
+    network: true,
     console: type.capture.console
   });
   await recorder.start();

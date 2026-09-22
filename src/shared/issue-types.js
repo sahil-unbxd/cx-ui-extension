@@ -7,6 +7,12 @@
  *   3. a prompt template in src/prompt/templates.js keyed by the same id,
  *   4. a section in SKILLS.md with the same `skillsSection` heading.
  * Nothing else should need to change.
+ *
+ * The `capture` flags below describe what each strategy forwards into the
+ * prompt beyond the shared, unconditional "validate first" SDK-asset check
+ * (src/capture/sdk-assets.js), which runs for every issue type regardless of
+ * these flags — see the comment on Recorder construction in
+ * src/background/service-worker.js.
  */
 export const ISSUE_TYPES = {
   proxy_access: {

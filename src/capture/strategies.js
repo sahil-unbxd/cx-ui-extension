@@ -4,9 +4,17 @@
  *  a prompt section. A strategy must only capture what its own issue type needs:
  *  no DOM geometry for SRP, no API payloads for alignment. That separation is
  *  the whole point of having separate strategies.
+ *
+ *  The one deliberate exception is `sdkAssets` (see runStrategy below): a fixed,
+ *  small "did search.js/autosuggest.js/their CSS load" check that runs for
+ *  every issue type, because a broken SDK bundle explains almost any symptom.
+ *  It reports load status/timing for known Unbxd asset URLs only — never page
+ *  data — so it doesn't reopen the per-type payload boundary.
  */
 import { getIssueType } from '../shared/issue-types.js';
 import { redactUrl, redactedParams, shapeOf, truncate } from './redact.js';
+import { unbxdApiKind, isUnbxdHost } from '../shared/unbxd-endpoints.js';
+import { captureSdkAssets } from './sdk-assets.js';
 
 /* --------------------------------------------------------------------- */
 /* Proxy / VPN / access                                                    */
@@ -54,8 +62,20 @@ function classifyNetwork(requests) {
   return { signals: [...signals], notes: dedupe(notes).slice(0, 25) };
 }
 
+/** Is the failure isolated to Unbxd's own infrastructure, or is the whole page
+ *  unreachable? This is the single most useful split for this issue type: an
+ *  engineer's VPN/proxy usually breaks everything, while a scoped block
+ *  (CORS misconfig, WAF rule) usually breaks only the Unbxd API/asset calls. */
+function unbxdFailureScope(problems) {
+  if (!problems.length) return 'none';
+  const unbxdFailing = problems.filter((r) => r.isUnbxd);
+  if (unbxdFailing.length === 0) return 'unbxd_unaffected';
+  if (unbxdFailing.length === problems.length) return 'unbxd_only';
+  return 'mixed';
+}
+
 async function captureProxy(session, recorder) {
-  const problems = recorder.problems();
+  const problems = recorder.problems().map((r) => ({ ...r, isUnbxd: isUnbxdHost(r.rawUrl) }));
   const classification = classifyNetwork(problems);
   const env = await session.evaluate(`(() => ({
     origin: location.origin,
@@ -68,6 +88,7 @@ async function captureProxy(session, recorder) {
   return {
     environment: env,
     classification,
+    unbxdFailureScope: unbxdFailureScope(problems),
     failedRequests: problems.slice(0, 20).map(compactRequest),
     distinctFailingHosts: dedupe(problems.map((r) => hostOf(r.url))).slice(0, 15)
   };
@@ -229,15 +250,21 @@ async function ancestorContext(session, selector) {
 /* SRP (search results page)                                               */
 /* --------------------------------------------------------------------- */
 
-const SEARCH_URL_HINTS = [/unbxd\.io/i, /\/search\b/i, /[?&]q=/i, /autosuggest/i, /\/browse\b/i];
-
-function looksLikeSearchApi(r) {
-  if (!['XHR', 'Fetch'].includes(r.type)) return false;
-  return SEARCH_URL_HINTS.some((re) => re.test(r.rawUrl));
+/**
+ * Only the Unbxd search and category endpoints matter for an SRP capture
+ * (https://search.unbxd.io/{apiKey}/{siteKey}/search|category?...). Autosuggest
+ * calls are excluded here — that's the alignment issue type's territory, and
+ * it deliberately doesn't capture API data at all. Every other request
+ * (analytics beacons, recs widgets, ad pixels, third-party scripts, even other
+ * Unbxd endpoints) is noise and must never be forwarded as "the" search call.
+ */
+function srpApiKind(r) {
+  const kind = unbxdApiKind(r.rawUrl);
+  return kind === 'search' || kind === 'category' ? kind : null;
 }
 
 async function captureSrp(session, recorder) {
-  const candidates = recorder.all().filter(looksLikeSearchApi);
+  const candidates = recorder.all().filter((r) => srpApiKind(r));
   // The last one wins: it is the call that produced what the engineer is looking at.
   const primary = candidates[candidates.length - 1] || null;
 
@@ -265,6 +292,7 @@ async function captureSrp(session, recorder) {
     searchRequest: primary
       ? {
           url: primary.url,
+          apiType: srpApiKind(primary),
           method: primary.method,
           params: redactedParams(primary.rawUrl),
           status: primary.status,
@@ -275,7 +303,10 @@ async function captureSrp(session, recorder) {
         }
       : null,
     searchRequestFound: Boolean(primary),
-    otherSearchCalls: candidates.slice(0, -1).map((r) => ({ url: r.url, status: r.status })).slice(-5),
+    otherSearchCalls: candidates
+      .slice(0, -1)
+      .map((r) => ({ url: r.url, apiType: srpApiKind(r), status: r.status }))
+      .slice(-5),
     responseSummary: response,
     renderedPage: rendered,
     failedRequests: recorder.problems().slice(0, 8).map(compactRequest),
@@ -363,6 +394,8 @@ export async function runStrategy(issueTypeId, session, recorder, options) {
   return {
     issueType: type.id,
     captureSummary: recorder.summary(),
+    // Validated first, for every issue type — see sdk-assets.js.
+    sdkAssets: captureSdkAssets(recorder),
     ...context
   };
 }
@@ -381,6 +414,7 @@ function compactRequest(r) {
     corsError: r.corsError,
     blockedReason: r.blockedReason,
     durationMs: r.durationMs,
+    isUnbxd: r.isUnbxd,
     requestHeaders: r.requestHeaders,
     responseHeaders: r.responseHeaders
   };
