@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>CX Debug Assistant — Options</title>
+  <link rel="stylesheet" href="../popup/popup.css" />
+  <style>
+    body { width: auto; max-width: 640px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 14px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <h1>CX Debug Assistant</h1>
+  <p class="fineprint">
+    Bring-your-own-key. There is no Unbxd backend in this version: analysis requests go
+    straight from your browser to the provider you choose, with your key.
+  </p>
+
+  <h2>Provider</h2>
+  <label class="field"><span>Provider</span><select id="provider"></select></label>
+  <label class="field"><span>Model</span><select id="model"></select></label>
+
+  <h2>API keys</h2>
+  <label class="field">
+    <span>Anthropic key <small><a class="link" href="https://console.anthropic.com/settings/keys" target="_blank">get one</a></small></span>
+    <input id="key-claude" type="password" placeholder="sk-ant-..." autocomplete="off" />
+  </label>
+  <label class="field">
+    <span>OpenAI key <small><a class="link" href="https://platform.openai.com/api-keys" target="_blank">get one</a></small></span>
+    <input id="key-openai" type="password" placeholder="sk-..." autocomplete="off" />
+  </label>
+
+  <h2>Capture &amp; prompt</h2>
+  <label class="field">
+    <span>Prompt token budget <small>captured context is shrunk to fit</small></span>
+    <input id="max-tokens" type="number" min="2000" max="60000" step="1000" />
+  </label>
+
+  <div class="actions">
+    <button id="save" class="primary">Save</button>
+    <button id="clear">Clear stored keys &amp; last analysis</button>
+    <span id="status" class="status"></span>
+  </div>
+
+  <h2>What gets sent</h2>
+  <ul class="fineprint">
+    <li>Request/response <em>metadata</em>: URL with secret query params redacted, method, status, timing, and a safe subset of headers.</li>
+    <li>Console errors and warnings, truncated.</li>
+    <li>For alignment issues: box models and a fixed list of computed style properties.</li>
+    <li>For SRP issues: the search request's params plus response counts and field <em>names</em> — never the catalogue data.</li>
+    <li>Never: response bodies, cookies, <code>Authorization</code> / <code>x-api-key</code> headers, or anything from tabs other than the one you captured.</li>
+  </ul>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

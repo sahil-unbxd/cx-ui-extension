@@ -1,0 +1,57 @@
+/**
+ * Single source of truth for the issue types the extension supports.
+ *
+ * Adding a new issue type means:
+ *   1. an entry here,
+ *   2. a capture strategy in src/capture/strategies.js keyed by the same id,
+ *   3. a prompt template in src/prompt/templates.js keyed by the same id,
+ *   4. a section in SKILLS.md with the same `skillsSection` heading.
+ * Nothing else should need to change.
+ */
+export const ISSUE_TYPES = {
+  proxy_access: {
+    id: 'proxy_access',
+    label: 'Proxy / VPN / access issue',
+    hint: 'Requests blocked, CORS errors, timeouts, geo-restricted responses.',
+    skillsSection: 'Proxy / VPN / Access Issues',
+    capture: {
+      network: true,
+      console: true,
+      // Everything the model needs lives in the network layer; no DOM geometry.
+      domGeometry: false,
+      searchApi: false
+    }
+  },
+  autosuggest_alignment: {
+    id: 'autosuggest_alignment',
+    label: 'Autosuggest alignment issue',
+    hint: 'Dropdown offset, clipped, behind other content, wrong width.',
+    skillsSection: 'Autosuggest Alignment Issues',
+    capture: {
+      network: false,
+      console: true,
+      domGeometry: true,
+      searchApi: false
+    }
+  },
+  srp_ui: {
+    id: 'srp_ui',
+    label: 'SRP (search results) UI issue',
+    hint: 'Wrong / missing / duplicated results,tag issue , correct price issue , facets, banners, pagination.',
+    skillsSection: 'SRP (Search Results Page) UI Issues',
+    capture: {
+      network: true,
+      console: true,
+      domGeometry: false,
+      searchApi: true
+    }
+  }
+};
+
+export const ISSUE_TYPE_LIST = Object.values(ISSUE_TYPES);
+
+export const DEFAULT_ISSUE_TYPE = 'srp_ui';
+
+export function getIssueType(id) {
+  return ISSUE_TYPES[id] || ISSUE_TYPES[DEFAULT_ISSUE_TYPE];
+}

@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>CX Debug Assistant</h1>
+    <nav class="tabs">
+      <button class="tab is-active" data-tab="debug">Debug</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+  </header>
+
+  <section id="panel-debug" class="panel">
+    <div id="key-warning" class="banner warn" hidden>
+      No API key for <span id="key-warning-provider">Claude</span>. Add one in the
+      <a href="#" data-goto="settings">Settings tab</a>.
+    </div>
+
+    <label class="field">
+      <span>Issue type</span>
+      <select id="issue-type"></select>
+      <small id="issue-hint"></small>
+    </label>
+
+    <label class="field">
+      <span>What's wrong?</span>
+      <textarea id="description" rows="4" placeholder="e.g. Autosuggest dropdown appears ~40px to the left of the search box on category pages"></textarea>
+    </label>
+
+    <details id="selector-overrides" hidden>
+      <summary>Selector overrides (optional)</summary>
+      <label class="field"><span>Search input selector</span><input id="input-selector" placeholder="auto-detect" /></label>
+      <label class="field"><span>Dropdown selector</span><input id="dropdown-selector" placeholder="auto-detect" /></label>
+    </details>
+
+    <div class="actions">
+      <button id="start" class="primary">Start capture</button>
+      <button id="stop" class="primary" hidden>Stop &amp; analyse</button>
+      <button id="cancel" hidden>Cancel</button>
+    </div>
+
+    <p id="status" class="status"></p>
+
+    <div id="result" hidden>
+      <div class="result-head">
+        <strong>Analysis</strong>
+        <span id="result-meta" class="meta"></span>
+        <button id="copy" class="link">Copy</button>
+      </div>
+      <pre id="answer"></pre>
+      <details>
+        <summary>Prompt sent to the model</summary>
+        <pre id="sent-prompt" class="small"></pre>
+      </details>
+      <details>
+        <summary>Captured context (redacted)</summary>
+        <pre id="captured" class="small"></pre>
+      </details>
+    </div>
+  </section>
+
+  <section id="panel-settings" class="panel" hidden>
+    <label class="field">
+      <span>Provider</span>
+      <select id="provider"></select>
+    </label>
+    <label class="field">
+      <span>Model</span>
+      <select id="model"></select>
+    </label>
+    <label class="field">
+      <span>API key <small id="key-help"></small></span>
+      <input id="api-key" type="password" autocomplete="off" />
+    </label>
+    <label class="field">
+      <span>Prompt token budget</span>
+      <input id="max-tokens" type="number" min="2000" max="60000" step="1000" />
+    </label>
+    <div class="actions">
+      <button id="save" class="primary">Save</button>
+      <a id="open-options" href="#" class="link">Full options page</a>
+    </div>
+    <p id="settings-status" class="status"></p>
+    <p class="fineprint">
+      Keys are stored in <code>chrome.storage.local</code> on this machine only and are sent
+      solely to the provider you pick. Captures are redacted before they leave the browser:
+      no response bodies, cookies or auth headers.
+    </p>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

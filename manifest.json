@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "CX Debug Assistant",
+  "version": "1.0.0",
+  "description": "Capture page context with CDP and get a root-cause analysis for common Unbxd CX issue types.",
+  "minimum_chrome_version": "116",
+  "permissions": ["debugger", "storage", "activeTab", "scripting", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "CX Debug Assistant",
+    "default_popup": "popup/popup.html"
+  },
+  "options_page": "options/options.html"
+}
