@@ -193,12 +193,56 @@ function srpApiKind(r) {
  * problems over the same two endpoints. `prefer` decides which endpoint wins
  * when a page fired both (a category page that also runs a search widget).
  */
+
+/** The `contentType:"x"` value a tabbed storefront filters by. */
+function filterValueOf(rawUrl) {
+  try {
+    const f = new URL(rawUrl).searchParams.get('filter');
+    if (!f) return null;
+    const m = f.match(/contentType\s*:\s*"?([\w-]+)"?/i);
+    return m ? m[1] : f.slice(0, 80);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Chooses which captured call the analysis is about.
+ *
+ * Tabbed storefronts construct one SDK instance per tab and fire one call each
+ * on load — Lindt runs products/recipes/other, split only by
+ * `filter=contentType:"…"` on otherwise identical requests. Taking the last
+ * call would analyse whichever tab happened to fire last rather than the one
+ * the engineer is looking at, so match the page's own tab when we can tell.
+ * The tab comes from the URL: Lindt uses a `/tab/<name>` path segment and
+ * drops the query param for the default tab, so both shapes are checked.
+ */
+function pickPrimaryCall(candidates, pageTab) {
+  if (!candidates.length) return null;
+  const tab = (pageTab && (pageTab.queryTab || pageTab.pathTab)) || null;
+  if (tab) {
+    // "products" tab ↔ contentType:"product": tolerate the plural/singular gap.
+    const singular = tab.replace(/s$/, '');
+    const match = candidates.find((r) => {
+      const v = filterValueOf(r.rawUrl);
+      return v && (v === tab || v === singular || v.replace(/s$/, '') === singular);
+    });
+    if (match) return match;
+  }
+  return candidates[candidates.length - 1];
+}
+
 async function captureResultsPage(session, recorder, { prefer, includeSiteConfig = true, reloaded = false } = {}) {
   const all = recorder.all().filter((r) => srpApiKind(r));
   const preferred = prefer ? all.filter((r) => srpApiKind(r) === prefer) : [];
   const candidates = preferred.length ? preferred : all;
-  // The last one wins: it is the call that produced what the engineer is looking at.
-  const primary = candidates[candidates.length - 1] || null;
+  const pageTab = await session.evaluate(`(() => {
+    try {
+      const m = location.pathname.match(/\\/tab\\/([a-z0-9_-]+)/i);
+      return { pathTab: m ? m[1] : null, queryTab: new URLSearchParams(location.search).get('tab') };
+    } catch { return null; }
+  })()`);
+  const primary = pickPrimaryCall(candidates, pageTab);
 
   let response = null;
   if (primary) {
@@ -246,8 +290,17 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
   const apiCallCounts = {
     search: all.filter((r) => srpApiKind(r) === 'search').length,
     category: all.filter((r) => srpApiKind(r) === 'category').length,
-    note: 'More than one call per page load points at double initialisation or a manual getResults()/getCategoryPage() on top of the automatic one.'
+    note: 'More than one call per page load points at double initialisation or a manual getResults()/getCategoryPage() on top of the automatic one — OR a tabbed storefront running one instance per tab. Check allApiCalls[].filter first: distinct contentType filters mean separate tabs, which is by design.'
   };
+
+  // Every captured call with the filter that distinguishes it, so a tabbed
+  // page reads as "three tabs" rather than "three mystery duplicate calls".
+  const allApiCalls = all.map((r) => ({
+    apiType: srpApiKind(r),
+    filter: filterValueOf(r.rawUrl),
+    status: r.status,
+    isPrimary: primary ? r.requestId === primary.requestId : false
+  }));
 
   const siteConfig = includeSiteConfig ? await captureSiteConfig(session, recorder, { includeCss: true }) : undefined;
 
@@ -268,6 +321,8 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
     selfDebug,
     searchRequest,
     searchRequestFound: Boolean(primary),
+    pageTab,
+    allApiCalls,
     apiCallCounts,
     otherSearchCalls: candidates
       .slice(0, -1)

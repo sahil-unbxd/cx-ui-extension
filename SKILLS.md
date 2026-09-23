@@ -89,6 +89,25 @@ compare the page-detection condition against `renderedPage.bodyClasses`
 (Magento: `catalog-category-view`; Shopify: `template-collection`). Stop here —
 nothing downstream is meaningful.
 
+**Do not over-read `sdk_initialised`.** It is an upstream check, so a false
+failure makes every later check look like its consequence and produces a
+confidently wrong answer. Three rules, learned from a real miss:
+
+- **`constructorOnWindow: false` means nothing.** Customer bundles keep the
+  `UnbxdSearch` constructor module-scoped — it appears zero times on `window`
+  in the shipped Lindt bundles while instances run normally. Never cite it as
+  evidence the SDK failed. Read `instanceFound` / `sdkReady` instead.
+- **Status `skip` with `probeUnavailable: true` is not a failure.** It means
+  the extension could not evaluate in the page at all. Say the check was
+  inconclusive and what to recapture — never report "the SDK is missing".
+- **Initialisation is deferred.** Bundles construct instances inside
+  `setTimeout` after building config in a `createSearchConfig()` factory
+  (Lindt: 100ms for the instance, 1000ms for tab listeners). The extension
+  waits for an instance before probing and reports `sdkReady.waitedMs`. If a
+  capture still shows none, cross-check the console: SDK-emitted errors such as
+  `'el' is not a valid DOM selector` prove the SDK *did* run and contradict an
+  "SDK never initialised" reading. Trust the contradiction.
+
 ### Step 2 — is the page running as the right type?
 `page_type_matches_endpoint` compares `getProductType()` with the endpoint that
 actually fired. `SEARCH` on a category page is why a PLP shows search results.
@@ -422,6 +441,59 @@ Compare `responseSummary.returnedProductCount` with `renderedPage.domProductNode
 6. **Pagination/offset bug** — `start` in the request does not match the page the UI believes it is on.
 7. **Zero results are correct** — the catalogue genuinely has no match. Check `didYouMean`/`redirect` before blaming the integration.
 8. **Right data, wrong endpoint conflated** — an SRP built from `category` behaves differently from one built on `search` (different param shape, e.g. `p=` vs `q=`); check `searchRequest.apiType` before assuming the wrong root cause category.
+
+### Tabbed storefronts (several calls are normal)
+Some SRPs are tabbed — products / recipes / articles — with **one SDK instance
+per tab**, each firing its own call to the same endpoint, distinguished only by
+`filter=contentType:"…"`. Lindt Canada runs three (`product`, `recipe`,
+`other`).
+
+- `allApiCalls[]` lists every captured call with its `filter` and which was
+  treated as primary. **Distinct `contentType` filters are by design, not
+  double initialisation** — don't report them as a duplicate-call bug. Only
+  repeated calls with the *same* filter are a duplication smell.
+- The primary call is matched to the tab the page is on (`pageTab`, from a
+  `/tab/<name>` path segment or a `tab=` query param; the default tab usually
+  carries neither). If `pageTab` is null and several tabs fired, say which call
+  you analysed and that the engineer may have meant another tab.
+- Counts from the wrong tab are the classic false alarm: the recipes tab
+  legitimately returns zero products.
+
+### Price rendering
+Price is the most common "wrong value on the tile" ticket, and it needs four
+things compared — `siteConfig.priceConfig` lays them out:
+
+| Stage | Where |
+|---|---|
+| Requested | `priceConfig.requestedPriceFields` — price fields in the request's `fields=` list |
+| Returned | `responseSummary.productFieldNames` — what the catalogue actually populated |
+| Configured | `priceConfig.configuredPriceMappings` — `attributesMap` entries involving price |
+| Drawn | `priceConfig.priceRendererInBundle` + `rendererReadsKnownFields` — what the customer's render function touches |
+
+Read them in that order, and mind the gap between *mapped* and *read*:
+
+- **Requested but not returned** is a catalogue/indexing gap, not a config bug.
+  Lindt Canada requests seven price fields (`price`, `displayPrice`,
+  `salePrice`, `sortPrice`, `specialPrice`, `originalPrice`,
+  `layaMemberPrice`) and the catalogue populates two — `price` and
+  `originalPrice`. Five are absent on every product. Worth reporting; by itself
+  it breaks nothing.
+- **Mapped but not returned is not automatically the bug.** Lindt maps
+  `unxStrikePrice → discountPrice`, a field that exists nowhere in the
+  catalogue, and the site still prices correctly: its template calls
+  `renderProductPrice(unxPrice, specialPrice, originalPrice, uniqueId)` and
+  reads `originalPrice` straight off the product, ignoring the mapping. Blaming
+  that mapping would be a confident wrong answer — which is why
+  `attribute_mapping_matches_response` is a WARN, not a FAIL. Check
+  `priceRendererInBundle` and whether prices actually render first.
+- **A strike-through / "was" price that never appears** usually means the field
+  feeding it is empty, not that the renderer is broken: these renderers
+  typically draw two prices only when both parse as numbers and differ
+  (Lindt: `price 185` vs `originalPrice 188` → both render).
+- **Mind the units.** Values arrive as plain numbers, with currency and
+  decimals applied by a formatter in the bundle (`formatCanadianPrice` →
+  `"$" + Number(v).toFixed(2)`). "Price shows as 188 instead of $1.88" is a
+  formatter/units question, not an API one.
 
 ### Fix pattern to suggest
 State the API-versus-UI verdict in the first sentence and quote the two numbers that prove it. For API-side causes, give the corrected request params and say which side owns the change (storefront integration code versus Unbxd console configuration). For UI-side causes, name the specific response field the template should read, and the config key (`attributesMap`, `productAttributes`, `products.el`) that needs changing in `{siteKey}_search.js`. For races, recommend sequencing/aborting stale requests rather than debouncing alone. If the evidence cannot separate the two, say exactly which additional capture would (for example: re-run the query in an incognito window, or capture with a facet applied).

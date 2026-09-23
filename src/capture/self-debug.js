@@ -125,14 +125,30 @@ export async function runSelfDebug(session, input) {
 
   /* 3 — SDK actually initialised ---------------------------------------- */
   const live = (siteConfig && siteConfig.liveConfig) || {};
+  const ready = (siteConfig && siteConfig.sdkReady) || null;
+  const instanceSeen = Boolean(sdk.instanceFound || live.instanceFound || (ready && ready.ready));
+  // A probe that could not run is not evidence of an absent SDK. Reporting
+  // that as FAIL is how this check produced a confident false negative on a
+  // site whose SDK was demonstrably running — it was emitting its own console
+  // errors at the time. Unprovable → skip, never fail.
+  const probeUnavailable = Boolean(sdk.unavailable || (ready && ready.probeFailed));
+  const namedKeys = (ready && ready.namedKeys && ready.namedKeys.length ? ready.namedKeys : live.instanceKeys) || [];
   add(
     'sdk_initialised',
     'SDK instance exists on the page',
-    sdk.instanceFound || live.instanceFound ? PASS : FAIL,
-    sdk.instanceFound || live.instanceFound
-      ? `Instance found (${(live.instanceKeys || []).join(', ') || 'window.unbxdSearch'}).`
-      : live.reason || 'No initialised UnbxdSearch instance — the page-type detection condition likely never matched.',
-    { instanceKeys: live.instanceKeys || [], bodyClasses: renderedPage ? renderedPage.bodyClasses : null }
+    instanceSeen ? PASS : probeUnavailable ? SKIP : FAIL,
+    instanceSeen
+      ? `Instance found (${namedKeys.join(', ') || 'window.unbxdSearch'})${ready && ready.waitedMs ? ` after ${ready.waitedMs}ms` : ''}.`
+      : probeUnavailable
+        ? `Could not determine — ${(ready && ready.reason) || 'page evaluation did not return a result'}. Do not conclude the SDK is missing from this.`
+        : (ready && ready.reason) || live.reason || 'No initialised instance under window.unbxdSearch or window.unbxdSearchInstances after waiting — the page-type detection condition likely never matched.',
+    {
+      instanceKeys: namedKeys,
+      waitedMs: ready ? ready.waitedMs : null,
+      probeUnavailable,
+      bodyClasses: renderedPage ? renderedPage.bodyClasses : null,
+      note: 'window.UnbxdSearch (the constructor) is deliberately not used as a signal: customer bundles keep it module-scoped, so it is absent even when instances are running.'
+    }
   );
 
   /* 4 — page type matches the endpoint that fired ------------------------ */
@@ -403,10 +419,16 @@ function attributeMappingCheck(live, searchRequest, responseSummary) {
     return { ...base, status: SKIP, detail: 'No attributesMap/productAttributes/fields to check.', evidence };
   }
   if (missingMapped.length) {
+    // Deliberately WARN, not FAIL. A mapped field the catalogue doesn't return
+    // is a real smell but not proof of the visible bug: customer templates
+    // often ignore the mapping and read raw response fields directly. Lindt
+    // Canada maps unxStrikePrice → discountPrice (a field that exists nowhere)
+    // while its template reads originalPrice off the product — dead config,
+    // not the bug. Report it; let the rest of the evidence decide.
     return {
       ...base,
-      status: FAIL,
-      detail: `Config maps ${missingMapped.length} field(s) the catalogue did not return: ${missingMapped.join(', ')}. The template will read undefined for these — the usual cause of blank tiles or placeholder images. Either the field name is wrong in attributesMap or it is missing from the fields= list / the catalogue.`,
+      status: WARN,
+      detail: `Config maps ${missingMapped.length} field(s) the catalogue did not return: ${missingMapped.join(', ')}. That is only the root cause if the template actually reads them — templates frequently read raw response fields (originalPrice, specialPrice) directly and ignore the mapping. Check siteConfig.priceConfig.priceRendererInBundle and whether the tiles render before blaming a mapping.`,
       evidence
     };
   }

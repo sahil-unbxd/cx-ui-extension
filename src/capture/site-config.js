@@ -19,6 +19,7 @@
  */
 import { unbxdAssetKind, unbxdApiKind } from '../shared/unbxd-endpoints.js';
 import { truncate } from './redact.js';
+import { waitForSdkReady } from './sdk-ready.js';
 
 const MAX_FETCH_BYTES = 3_000_000;
 
@@ -34,15 +35,20 @@ const CONFIG_KEYS = [
   'unbxdAnalytics', 'onEvent'
 ];
 
-export async function captureSiteConfig(session, recorder, { includeCss = true } = {}) {
+export async function captureSiteConfig(session, recorder, { includeCss = true, waitForSdk = true } = {}) {
   const assetUrls = await discoverAssetUrls(session, recorder);
+  // Customer bundles initialise on timers, so probing immediately can read a
+  // page whose SDK simply hasn't constructed yet. Wait (bounded) first.
+  const sdkReady = waitForSdk ? await waitForSdkReady(session) : null;
   const liveConfig = await readLiveConfig(session);
   const bundleReview = await reviewBundles(assetUrls, { includeCss });
 
   return {
     assetUrls,
+    sdkReady,
     liveConfig,
     bundleReview,
+    priceConfig: priceConfig(liveConfig, bundleReview, recorder),
     consistency: checkConsistency(liveConfig, bundleReview, recorder),
     note: 'liveConfig is the resolved runtime config and is authoritative. bundleMarkers are regex heuristics over a minified bundle that also contains the SDK library itself — treat them as weak signals, and never contradict liveConfig with them.'
   };
@@ -165,7 +171,10 @@ async function readLiveConfig(session) {
       null;
 
     const result = {
-      constructorPresent: typeof window.UnbxdSearch === 'function',
+      // Informational only. Customer bundles keep the constructor
+      // module-scoped, so this is false on working sites — it is NOT evidence
+      // that the SDK failed to initialise. Read instanceFound instead.
+      constructorOnWindow: typeof window.UnbxdSearch === 'function',
       instanceFound: Boolean(instance && instance.options),
       instanceKeys: instances,
       instanceCount: instances.length || (window.unbxdSearch ? 1 : 0),
@@ -284,9 +293,46 @@ function jsMarkers(js) {
     addToUrlTrueMentions: count(/addToUrl\s*:\s*(?:!0|true)/g),
     addToUrlFalseMentions: count(/addToUrl\s*:\s*(?:!1|false)/g),
     mentionsAnalytics: /unbxdAnalytics|UnbxdAnalyticsConf/.test(js),
+    priceRenderer: priceRendererMarkers(js),
     platformHints: ['Magento', 'Shopify', 'Salesforce', 'BigCommerce', 'SFCC']
       .filter((p) => new RegExp(p, 'i').test(js))
       .slice(0, 3)
+  };
+}
+
+/**
+ * Locates the customer's price-rendering function and reports which price-ish
+ * identifiers it touches. This is the difference between "the config maps a
+ * field that doesn't exist" (often harmless) and "the thing that draws the
+ * price reads a field that doesn't exist" (the real bug).
+ */
+function priceRendererMarkers(js) {
+  // A bundle usually has both a *renderer* (builds the price markup) and a
+  // *formatter* (adds the currency symbol). The renderer decides which fields
+  // are read, so prefer it and list the rest.
+  const found = [];
+  const re = /function\s+(\w*(?:render|format|build|get)\w*[Pp]rice\w*)\s*\(/g;
+  let m;
+  while ((m = re.exec(js)) !== null && found.length < 6) {
+    found.push({ name: m[1], index: m.index });
+  }
+  if (!found.length) return null;
+
+  const primary = found.find((f) => /render|build/i.test(f.name)) || found[0];
+  const body = js.slice(primary.index, primary.index + 1200);
+
+  // CSS class names from the template markup sneak in, so drop anything with
+  // an underscore or dash — catalogue fields are camelCase.
+  const tokens = [...new Set(body.match(/\b[a-zA-Z]\w*[Pp]rice\w*\b/g) || [])]
+    .filter((t) => t !== primary.name && !/[_-]/.test(t) && !/^(render|format|build|get)/i.test(t))
+    .slice(0, 12);
+
+  return {
+    name: primary.name,
+    otherPriceFunctions: found.filter((f) => f.name !== primary.name).map((f) => f.name),
+    readsTokens: tokens,
+    comparesTwoValues: /<|>|!=|!==/.test(body),
+    note: 'Regex-located in a minified bundle: readsTokens is indicative, not a parse — it is every price-looking identifier near the function. Cross-referenced in priceConfig.rendererReadsKnownFields.'
   };
 }
 
@@ -310,6 +356,71 @@ function cssMarkers(css) {
     }
   }
   return { ruleCount, riskyWidgetRules: risky };
+}
+
+/* ------------------------------------------------------------------ */
+/* 3b. How is price actually rendered?                                   */
+/* ------------------------------------------------------------------ */
+
+const PRICE_FIELD_RE = /price/i;
+
+/**
+ * Answers "how is this site rendering price?" — the question that decides most
+ * SRP price tickets, and one the config alone does not answer.
+ *
+ * Three places have to agree and often don't: what the request asks for
+ * (`fields=`), what the catalogue returns, and what the config maps / the
+ * template reads. Lindt Canada is the instructive case: it requests seven
+ * price fields, the catalogue returns two (`price`, `originalPrice`), the
+ * config maps `unxStrikePrice → discountPrice` (a field that exists nowhere),
+ * and the template ignores that mapping and reads `originalPrice` off the raw
+ * product. So a mapped-but-missing field is NOT automatically the bug — which
+ * is why this reports the lists separately instead of asserting a conclusion.
+ */
+function priceConfig(liveConfig, bundleReview, recorder) {
+  const options = (liveConfig && liveConfig.options) || {};
+  const products = options.products || {};
+
+  let requested = [];
+  for (const r of recorder.all()) {
+    if (!['search', 'category'].includes(unbxdApiKind(r.rawUrl))) continue;
+    try {
+      const fields = new URL(r.rawUrl).searchParams.get('fields');
+      if (fields) requested = fields.split(',').map((f) => f.trim()).filter(Boolean);
+    } catch {
+      /* ignore */
+    }
+  }
+  const requestedPriceFields = requested.filter((f) => PRICE_FIELD_RE.test(f));
+
+  const mappings = {};
+  const map = products.attributesMap;
+  if (map && typeof map === 'object') {
+    for (const [alias, field] of Object.entries(map)) {
+      if (PRICE_FIELD_RE.test(alias) || (typeof field === 'string' && PRICE_FIELD_RE.test(field))) {
+        mappings[alias] = field;
+      }
+    }
+  }
+
+  const js = (bundleReview || []).find((b) => b.bundleMarkers);
+  const renderer = js && js.bundleMarkers ? js.bundleMarkers.priceRenderer : null;
+
+  // Which of the renderer's tokens match fields the request asks for or the
+  // config maps — separates a real field read from a look-alike identifier.
+  const known = new Set([...requestedPriceFields, ...Object.values(mappings).filter((v) => typeof v === 'string')]);
+  const rendererReadsKnownFields = renderer && renderer.readsTokens
+    ? renderer.readsTokens.filter((t) => known.has(t))
+    : [];
+
+  return {
+    requestedPriceFields,
+    configuredPriceMappings: mappings,
+    priceRendererInBundle: renderer,
+    rendererReadsKnownFields,
+    howToRead:
+      'Compare requestedPriceFields against responseSummary.productFieldNames (what the catalogue actually returned) and against configuredPriceMappings. A requested field absent from the response is a catalogue/indexing gap. A mapped field absent from the response is dead config ONLY if the template also reads it — customer templates frequently read raw response fields (originalPrice, specialPrice) directly and ignore the mapping, so check priceRendererInBundle before blaming a mapping.'
+  };
 }
 
 /* ------------------------------------------------------------------ */
