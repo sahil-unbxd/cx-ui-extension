@@ -17,6 +17,7 @@ import { unbxdApiKind, isUnbxdHost } from '../shared/unbxd-endpoints.js';
 import { captureSdkAssets } from './sdk-assets.js';
 import { captureSiteConfig } from './site-config.js';
 import { runSelfDebug, runAutosuggestSelfDebug } from './self-debug.js';
+import { extractCandidateValues, traceValuesInResponse } from './value-trace.js';
 
 /* --------------------------------------------------------------------- */
 /* Autosuggest alignment                                                   */
@@ -232,7 +233,8 @@ function pickPrimaryCall(candidates, pageTab) {
   return candidates[candidates.length - 1];
 }
 
-async function captureResultsPage(session, recorder, { prefer, includeSiteConfig = true, reloaded = false } = {}) {
+async function captureResultsPage(session, recorder, options = {}) {
+  const { prefer, includeSiteConfig = true, reloaded = false } = options;
   const all = recorder.all().filter((r) => srpApiKind(r));
   const preferred = prefer ? all.filter((r) => srpApiKind(r) === prefer) : [];
   const candidates = preferred.length ? preferred : all;
@@ -245,9 +247,21 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
   const primary = pickPrimaryCall(candidates, pageTab);
 
   let response = null;
+  let valueTrace = null;
   if (primary) {
     const body = await session.trySend('Network.getResponseBody', { requestId: primary.requestId });
     response = summariseSearchResponse(body);
+    // "Where does this rendered value come from?" — engineers paste the
+    // element, so trace anything quotable in their description back to the
+    // response field that produced it.
+    const candidates = extractCandidateValues(options.description);
+    if (candidates.length) {
+      const raw = body && !body.__error ? (body.base64Encoded ? safeAtob(body.body) : body.body) : '';
+      valueTrace = traceValuesInResponse(raw, candidates, {
+        requestedFields: (redactedParams(primary.rawUrl).fields || '').split(',').map((f) => f.trim()).filter(Boolean),
+        attributesMap: null
+      });
+    }
   }
 
   const rendered = await session.evaluate(`(() => {
@@ -304,6 +318,20 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
 
   const siteConfig = includeSiteConfig ? await captureSiteConfig(session, recorder, { includeCss: true }) : undefined;
 
+  // The trace ran before the live config was read, so fill in the alias link
+  // now that attributesMap is known — that is the step that turns
+  // "label_product_page_label" into "the template reads it as unxLabelName".
+  if (valueTrace && valueTrace.traced && siteConfig) {
+    const map = siteConfig.liveConfig?.options?.products?.attributesMap;
+    if (map && typeof map === 'object') {
+      for (const t of valueTrace.traced) {
+        for (const f of t.fields || []) {
+          f.mappedToAliases = Object.keys(map).filter((alias) => map[alias] === f.field);
+        }
+      }
+    }
+  }
+
   // The self-debug pass runs last: it reads the live SDK and turns everything
   // above into ordered pass/fail verdicts, so the model leads with a diagnosis
   // instead of re-deriving one from raw data.
@@ -321,6 +349,7 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
     selfDebug,
     searchRequest,
     searchRequestFound: Boolean(primary),
+    valueTrace,
     pageTab,
     allApiCalls,
     apiCallCounts,
@@ -339,9 +368,9 @@ async function captureResultsPage(session, recorder, { prefer, includeSiteConfig
 }
 
 const captureSrp = (session, recorder, options = {}) =>
-  captureResultsPage(session, recorder, { prefer: 'search', reloaded: options.reloaded });
+  captureResultsPage(session, recorder, { prefer: 'search', reloaded: options.reloaded, description: options.description });
 const capturePlp = (session, recorder, options = {}) =>
-  captureResultsPage(session, recorder, { prefer: 'category', reloaded: options.reloaded });
+  captureResultsPage(session, recorder, { prefer: 'category', reloaded: options.reloaded, description: options.description });
 
 /**
  * Turn a search response body into counts + shape. The catalogue data itself
@@ -475,10 +504,16 @@ async function captureAutosuggestData(session, recorder, options = {}) {
 
   let response = null;
   let requestedParams = {};
+  let valueTrace = null;
   if (primary) {
     requestedParams = redactedParams(primary.rawUrl);
     const body = await session.trySend('Network.getResponseBody', { requestId: primary.requestId });
     response = summariseAutosuggestResponse(body, requestedParams);
+    const candidates = extractCandidateValues(options.description);
+    if (candidates.length) {
+      const raw = body && !body.__error ? (body.base64Encoded ? safeAtob(body.body) : body.body) : '';
+      valueTrace = traceValuesInResponse(raw, candidates, { requestedFields: [], attributesMap: null });
+    }
   }
 
   // Scope the DOM check to the autosuggest dropdown when we can find it —
@@ -529,6 +564,7 @@ async function captureAutosuggestData(session, recorder, options = {}) {
 
   return {
     selfDebug,
+    valueTrace,
     autosuggestRequest,
     autosuggestRequestFound: Boolean(primary),
     responseSummary: response,

@@ -21,6 +21,7 @@ import { redactedParams, truncate } from './redact.js';
 import { captureSiteConfig } from './site-config.js';
 import { captureSdkAssets } from './sdk-assets.js';
 import { runSelfDebug, runAutosuggestSelfDebug } from './self-debug.js';
+import { traceValuesInResponse } from './value-trace.js';
 
 const MAX_RESULT_CHARS = 6000;
 /** Expressions that would exfiltrate credentials rather than debug a page. */
@@ -358,6 +359,76 @@ export function createToolbox({ session, recorder }) {
           rendered,
           reloaded: true
         });
+      }
+    },
+
+    trace_rendered_value: {
+      description:
+        'Trace a value visible in the UI back to the API field that produced it, and to the template that draws it. Give it the text you can see (e.g. "2 for $12") and/or a field name. Returns which response field contains that value, which attributesMap alias the template reads it through, and matching snippets from the customer bundle. Use this for any "where does this value come from / why is this label wrong" question instead of guessing from field names.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          value: { type: 'string', description: 'Text as rendered in the UI, e.g. "2 for $12".' },
+          field: { type: 'string', description: 'Optionally a response field name to look up directly, e.g. "label_product_page_label".' }
+        }
+      },
+      run: async ({ value, field }) => {
+        // Response side: which field holds the value.
+        const apiReq = recorder
+          .all()
+          .filter((r) => ['search', 'category', 'autosuggest'].includes(unbxdApiKind(r.rawUrl)))
+          .pop();
+        let responseTrace = null;
+        let requestedFields = [];
+        if (apiReq) {
+          try {
+            const f = new URL(apiReq.rawUrl).searchParams.get('fields');
+            requestedFields = f ? f.split(',').map((x) => x.trim()) : [];
+          } catch {
+            /* ignore */
+          }
+          const body = await session.trySend('Network.getResponseBody', { requestId: apiReq.requestId });
+          const raw = body && !body.__error ? (body.base64Encoded ? atob(body.body) : body.body) : '';
+          const targets = [value, field].filter(Boolean);
+          if (targets.length) responseTrace = traceValuesInResponse(raw, targets, { requestedFields });
+        }
+
+        // Config side: which alias maps to the field.
+        const cfg = await captureSiteConfig(session, recorder, { includeCss: false, waitForSdk: false });
+        const attributesMap =
+          (cfg.liveConfig && cfg.liveConfig.options && cfg.liveConfig.options.products &&
+            cfg.liveConfig.options.products.attributesMap) || null;
+
+        // Template side: where the bundle mentions the field or its alias.
+        const fieldsToFind = new Set();
+        if (field) fieldsToFind.add(field);
+        for (const t of (responseTrace && responseTrace.traced) || []) {
+          for (const f of t.fields || []) {
+            fieldsToFind.add(f.field);
+            for (const a of f.mappedToAliases || []) fieldsToFind.add(a);
+          }
+        }
+        if (attributesMap) {
+          for (const [alias, target] of Object.entries(attributesMap)) {
+            if (fieldsToFind.has(target)) fieldsToFind.add(alias);
+          }
+        }
+
+        const bundleUsage = [];
+        for (const name of [...fieldsToFind].slice(0, 4)) {
+          const hit = await tools.search_bundle.run({ pattern: name, max_matches: 2, context_chars: 220 });
+          if (hit && hit.snippets && hit.snippets.length) {
+            bundleUsage.push({ name, matchCount: hit.matchCount, snippets: hit.snippets });
+          }
+        }
+
+        return {
+          responseTrace,
+          attributesMap,
+          bundleUsage,
+          howToRead:
+            'responseTrace names the field carrying the value. attributesMap shows the alias the template destructures it as. bundleUsage shows the markup. Element ids in customer templates are usually the product uniqueId, so an id in the pasted element pins the exact product. A value rendered with no matching response field is produced client-side (a template literal, a fallback, or another script on the page) — say so rather than inventing a field.'
+        };
       }
     }
   };

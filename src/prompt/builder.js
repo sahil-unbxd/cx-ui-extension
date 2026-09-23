@@ -15,6 +15,9 @@ const SDK_VALIDATION_HEADING = 'SDK Asset Validation (All Issue Types)';
 // Generic on purpose: it covers whichever bundle got reviewed (search.js,
 // autosuggest.js, ...), not just SRP/PLP.
 const CONFIG_REVIEW_HEADING = 'Config Bundle Review';
+// "Where does this rendered value come from?" — applies wherever a response
+// and a customer template are both in play (SRP, PLP, autosuggest data).
+const VALUE_TRACE_HEADING = 'Tracing a Rendered Value to its API Field';
 // The deterministic checks the extension runs on itself before the model sees
 // anything (context.selfDebug). Which specific playbook applies depends on
 // capture.selfDebugKind, since "results page" and "autosuggest data" run
@@ -30,7 +33,7 @@ export async function buildPrompt({ issueTypeId, description, context, pageUrl, 
   const headings = [SDK_VALIDATION_HEADING];
   const selfDebugHeading = type.capture && SELF_DEBUG_HEADINGS[type.capture.selfDebugKind];
   if (selfDebugHeading) headings.push(selfDebugHeading);
-  if (type.capture && type.capture.siteConfig) headings.push(CONFIG_REVIEW_HEADING);
+  if (type.capture && type.capture.siteConfig) headings.push(VALUE_TRACE_HEADING, CONFIG_REVIEW_HEADING);
   headings.push(type.skillsSection);
 
   const sections = await Promise.all(headings.map((h) => getSkillSection(h)));

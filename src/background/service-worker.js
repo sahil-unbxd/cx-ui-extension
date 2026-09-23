@@ -176,7 +176,9 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, 
       cancelCapture().catch(() => {});
     }, ANALYSIS_GUARD_MS);
 
-    context = await runStrategy(typeId, session, recorder, { ...(options || {}), reloaded });
+    // The description goes to the strategy too: value tracing reads the
+    // element/value the engineer pasted in order to find the field behind it.
+    context = await runStrategy(typeId, session, recorder, { ...(options || {}), description, reloaded });
 
     const prompt = await buildPrompt({
       issueTypeId: typeId,

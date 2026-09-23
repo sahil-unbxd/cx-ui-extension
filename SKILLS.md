@@ -239,6 +239,69 @@ best-effort convenience on top of it, not the last word.
 
 ---
 
+## Tracing a Rendered Value to its API Field
+
+Applies to SRP, PLP and Autosuggest-data captures. The question is: *"this
+thing on screen says X — where does X come from?"* Engineers usually ask it by
+pasting the element. Answer it by walking the chain, never by guessing from
+field names:
+
+```
+DOM text  ──▶  response field  ──▶  attributesMap alias  ──▶  template in the bundle
+```
+
+### What the capture gives you
+`context.valueTrace` is present whenever the description contained a pasted
+element or a quoted value. For each candidate it lists the response `field(s)`
+whose content contains that value, with the matching product's `uniqueId`,
+whether the field was in the request's `fields=` list, and
+`mappedToAliases` — the `attributesMap` alias the template reads it through.
+In agent mode, `trace_rendered_value` does the same on demand and additionally
+returns the bundle snippets that render it.
+
+### How to read it
+1. **Start from the id in the element.** Customer templates interpolate the
+   product's `uniqueId` into class names, so
+   `class="amasty-label-for-65063"` pins the product — look at that product's
+   fields, not the whole result set.
+2. **Find the field carrying the value**, then the alias. An empty
+   `mappedToAliases` means the template reads the raw response field directly;
+   that is common and not a fault.
+3. **Read the template.** `search_bundle` on the alias or field name shows the
+   markup. Most tile fields are rendered conditionally —
+   `${alias ? `<div …>${alias}</div>` : ""}` — so an absent or empty field
+   produces *no element at all*, not an empty one. "The label is missing" and
+   "the label is wrong" are therefore different bugs with different evidence.
+4. **A value with no matching response field is produced client-side** — a
+   template literal, a hard-coded fallback, or another script on the page
+   (Magento/Amasty plugins re-render their own labels). Say so plainly instead
+   of inventing a field.
+
+### Worked example (Lindt Canada, real)
+The element
+`<div class="amasty-label-container amasty-label-for-65063" style="color: #917236;"><div class="amlabel-text">2 for $12</div></div>`
+resolves as:
+
+- **Response** — product `uniqueId: 65063` has `label_product_page_label: "2 for $12"`. (Nine of twelve products on that query carry the same label; others differ — `2 for $10`, `2 For $16` — so the value is per-product catalogue data, not a template constant.)
+- **Config** — `attributesMap.unxLabelName → "label_product_page_label"`, `attributesMap.unxLabelColour → "label_product_page_colour"`.
+- **Template** — ``${y ? `<div class="amasty-label-container amasty-label-container-${s}-cat amasty-label-for-${s}" style="color: ${v||"#917236"};"><div class="amlabel-text">${y}</div></div>` : ""}`` where `y` = `unxLabelName`, `v` = `unxLabelColour`, `s` = `uniqueId`.
+- **The colour is a fallback.** `label_product_page_colour` is absent from every product in that response, so `v` is undefined and the template's own `#917236` is used — which is exactly the inline colour in the DOM. Do not report a missing colour field as the cause of a *correct-looking* label; it is working as written.
+
+So "where does 2 for $12 come from" answers as: the `label_product_page_label`
+field on that product, read through the `unxLabelName` alias, rendered by the
+label block in `{siteKey}_search.js`. To change it, change the catalogue field;
+to change when it appears, change the template's condition.
+
+### Fix pattern to suggest
+Name the field, the alias and the file. If the value is wrong, the fix is
+catalogue-side (the field's value) or console-side (which field feeds it) —
+not the template. If the element is missing entirely, check whether the field
+is empty for that product and whether it is in the request's `fields=` list; a
+field not requested is never returned, which reads identically to "empty" in
+the DOM.
+
+---
+
 ## Config Bundle Review
 
 SRP, PLP and Autosuggest-data captures additionally include `siteConfig`, a
