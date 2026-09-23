@@ -499,26 +499,91 @@ function apiVsDomCheck(responseSummary, renderedPage) {
 export async function readAutosuggestSdkState(session) {
   const fn = () => {
     const tried = [];
-    const tryGet = (label, getter) => {
+    const seen = (label, value) => {
       tried.push(label);
-      try {
-        const v = getter();
-        if (v) return { label, value: v };
-      } catch {
-        /* ignore */
-      }
-      return null;
+      return value ? { label, value } : null;
     };
-    const found =
-      tryGet('window.unbxdAutosuggest', () => window.unbxdAutosuggest) ||
-      tryGet('window.unbxdSearchInstances.autosuggest', () => window.unbxdSearchInstances && window.unbxdSearchInstances.autosuggest) ||
-      tryGet('window.unbxdSearch.autosuggest', () => window.unbxdSearch && window.unbxdSearch.autosuggest) ||
-      null;
+
+    // Autosuggest is a *separate* SDK from vanilla search: per
+    // AUTOSUGGEST_SDK_REFERENCE.md §2/§15 it is constructed as
+    // `new Autosuggest({...})` from `window.AutosuggestSDK`, and its config
+    // lives under inputBoxConfigs / suggestionBoxConfigs / apiConfigs — not
+    // under the UnbxdSearch `options` shape. Earlier versions probed the
+    // search SDK's globals and so never found it.
+    let sdkNamespace = null;
+    let instance = null;
+    try {
+      sdkNamespace = seen('window.AutosuggestSDK', window.AutosuggestSDK);
+    } catch { /* ignore */ }
+
+    for (const candidate of [
+      () => seen('window.autosuggest', window.autosuggest),
+      () => seen('window.unbxdAutosuggest', window.unbxdAutosuggest),
+      () => seen('window.unbxdSearchInstances.autosuggest', window.unbxdSearchInstances && window.unbxdSearchInstances.autosuggest)
+    ]) {
+      try {
+        const hit = candidate();
+        if (hit && !instance) instance = hit;
+      } catch { /* ignore */ }
+    }
+
+    // The instance exposes state via getState(); the reference documents dot
+    // notation ("response.popularProducts") for reads.
+    let liveState = null;
+    if (instance && instance.value) {
+      const inst = instance.value;
+      try {
+        const read = (key) => (typeof inst.getState === 'function' ? inst.getState(key) : undefined);
+        const resp = read('response') || (inst.state && inst.state.response) || null;
+        const countOf = (v) => (Array.isArray(v) ? v.length : null);
+        liveState = {
+          query: read('query') ?? (inst.state ? inst.state.query : null) ?? null,
+          responseCounts: resp
+            ? {
+                products: countOf(resp.products),
+                popularProducts: countOf(resp.popularProducts),
+                keywordSuggestions: countOf(resp.keywordSuggestions),
+                topSearchQueries: countOf(resp.topSearchQueries),
+                trendingSearches: countOf(resp.trendingSearches)
+              }
+            : null,
+          inputBound: Boolean(resp === null ? null : inst.state && inst.state.dom && inst.state.dom.inputBox)
+        };
+      } catch (e) {
+        liveState = { error: String((e && e.message) || e).slice(0, 140) };
+      }
+    }
+
+    // The config values that decide whether a call fires at all.
+    let configs = null;
+    try {
+      const cfg = instance && instance.value && (instance.value.configs || instance.value.options || instance.value.config);
+      if (cfg) {
+        configs = {
+          searchInput: cfg.inputBoxConfigs ? cfg.inputBoxConfigs.searchInput : null,
+          minChars: cfg.inputBoxConfigs ? cfg.inputBoxConfigs.minChars : null,
+          debounceDelay: cfg.inputBoxConfigs ? cfg.inputBoxConfigs.debounceDelay : null,
+          popularProductsCount: cfg.apiConfigs && cfg.apiConfigs.popularProducts ? cfg.apiConfigs.popularProducts.count : null,
+          keywordSuggestionsCount: cfg.apiConfigs && cfg.apiConfigs.keywordSuggestions ? cfg.apiConfigs.keywordSuggestions.count : null,
+          initialRequest: cfg.apiConfigs ? cfg.apiConfigs.initialRequest : null
+        };
+        if (configs.searchInput) {
+          try {
+            configs.searchInputMatches = document.querySelectorAll(configs.searchInput).length;
+          } catch {
+            configs.searchInputMatches = -2;
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
     return {
-      instanceFound: Boolean(found),
-      instanceLocation: found ? found.label : null,
+      instanceFound: Boolean(instance),
+      instanceLocation: instance ? instance.label : null,
+      sdkNamespacePresent: Boolean(sdkNamespace),
       locationsTried: tried,
-      optionsKeys: found && found.value && found.value.options ? Object.keys(found.value.options).slice(0, 40) : null
+      liveState,
+      configs
     };
   };
   return (await session.evaluate(`(${fn.toString()})()`)) || { instanceFound: false, unavailable: true };

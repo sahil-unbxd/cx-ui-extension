@@ -14,6 +14,7 @@ import { createToolbox } from '../capture/toolbox.js';
 import { createAutoStopWatcher } from '../capture/auto-stop.js';
 import { runAgentLoop } from '../llm/agent.js';
 import { getIssueType } from '../shared/issue-types.js';
+import { detectIssueType } from '../capture/detect-issue-type.js';
 import { getSettings } from '../shared/settings.js';
 
 const HARD_STOP_MS = 5 * 60 * 1000; // never hold the debugger longer than this
@@ -60,7 +61,9 @@ function status() {
 async function startCapture({ tabId, issueTypeId, reload = false, description = '' }) {
   if (active) await cancelCapture();
 
-  const type = getIssueType(issueTypeId);
+  // 'auto' is not a real issue type — keep the raw value on the session and
+  // resolve it at stop time, once there is evidence to resolve it from.
+  const type = getIssueType(issueTypeId === 'auto' ? undefined : issueTypeId);
   const settings = await getSettings();
   const session = new CdpSession(tabId);
   await session.attach();
@@ -78,7 +81,7 @@ async function startCapture({ tabId, issueTypeId, reload = false, description = 
 
   active = {
     tabId,
-    issueTypeId: type.id,
+    issueTypeId: issueTypeId === 'auto' ? 'auto' : type.id,
     session,
     recorder,
     reloaded: false,
@@ -103,11 +106,16 @@ async function startCapture({ tabId, issueTypeId, reload = false, description = 
   // auto-stop.js. It watches the same live session and recorder rather than
   // polling, and calls stopAndAnalyse itself once the evidence is conclusive,
   // so the engineer never has to press "Stop & analyse".
-  if (settings.autoStop !== false && type.capture.selfDebugKind) {
+  // With 'auto' the type isn't known yet, so arm the results-page watcher: it
+  // covers the search/category calls that dominate support tickets, and a
+  // mis-armed watcher only ever stops early — the real type is still detected
+  // at stop.
+  const watcherKind = issueTypeId === 'auto' ? 'results_page' : type.capture.selfDebugKind;
+  if (settings.autoStop !== false && watcherKind) {
     active.autoStopWatcher = createAutoStopWatcher({
       session,
       recorder,
-      selfDebugKind: type.capture.selfDebugKind,
+      selfDebugKind: watcherKind,
       onReady: () => triggerAutoStop(tabId)
     });
   }
@@ -155,7 +163,9 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, 
 
   const { session, recorder, tabId, reloaded, autoStopWatcher } = active;
   if (autoStopWatcher) autoStopWatcher.dispose();
-  const typeId = issueTypeId || active.issueTypeId;
+  const requestedType = issueTypeId || active.issueTypeId;
+  let detection = null;
+  let typeId = requestedType;
   const settings = await getSettings();
   const useAgent = agentMode ?? settings.agentMode;
 
@@ -178,14 +188,21 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, 
 
     // The description goes to the strategy too: value tracing reads the
     // element/value the engineer pasted in order to find the field behind it.
+    if (requestedType === 'auto') {
+      detection = await detectIssueType(session, recorder, description);
+      typeId = detection.issueTypeId;
+    }
+
     context = await runStrategy(typeId, session, recorder, { ...(options || {}), description, reloaded });
+    if (detection) context.detectedIssueType = detection;
 
     const prompt = await buildPrompt({
       issueTypeId: typeId,
       description,
       context,
       pageUrl,
-      maxTokens: settings.maxPromptTokens
+      maxTokens: settings.maxPromptTokens,
+      audience: settings.audience || 'support'
     });
 
     const apiKey = settings.apiKeys[settings.provider];
@@ -220,6 +237,9 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, 
     const record = {
       createdAt: Date.now(),
       issueTypeId: typeId,
+      detectedIssueType: detection,
+      audience: settings.audience || 'support',
+      knownIssues: prompt.knownIssues,
       pageUrl,
       description,
       stats: prompt.stats,

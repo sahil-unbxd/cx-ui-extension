@@ -449,7 +449,25 @@ function safeAtob(b64) {
  * topLevelKeys/responseKeys too — read those directly if a section here comes
  * back empty when it shouldn't.
  */
-const AUTOSUGGEST_SECTIONS = ['popularProducts', 'keywordSuggestions', 'topQueries', 'promotedSuggestion', 'inFields'];
+/**
+ * Doctype values the autosuggest API uses. Per AUTOSUGGEST_SDK_REFERENCE.md §5,
+ * the API returns **one flat `response.products[]` array** and the SDK's
+ * `getSortedProducts()` groups it by each item's `doctype` — there are no
+ * named sections in the payload. Reading it as named sections (as this once
+ * did) reports zero popular products on a response that is full of them.
+ */
+const DOCTYPE_SECTIONS = {
+  POPULAR_PRODUCTS: 'popularProducts',
+  KEYWORD_SUGGESTION: 'keywordSuggestions',
+  IN_FIELD: 'inFields',
+  PROMOTED_SUGGESTION: 'promotedSuggestions',
+  TOP_SEARCH_QUERIES: 'topQueries'
+};
+
+/** Legacy/structured shape, kept as a fallback — the reference notes the
+ *  source SDK and the minified bundle disagree about `initialRequestProducts`,
+ *  so both shapes are handled rather than assuming one. */
+const NAMED_SECTIONS = ['popularProducts', 'keywordSuggestions', 'topQueries', 'promotedSuggestion', 'inFields'];
 
 export function summariseAutosuggestResponse(bodyResult, requestedParams = {}) {
   if (!bodyResult || bodyResult.__error) {
@@ -473,15 +491,41 @@ export function summariseAutosuggestResponse(bodyResult, requestedParams = {}) {
 
   const resp = json.response && typeof json.response === 'object' ? json.response : json;
   const sections = {};
-  for (const name of AUTOSUGGEST_SECTIONS) {
+  let shape = 'unknown';
+
+  // Primary: the documented flat array grouped by doctype.
+  const flat = Array.isArray(resp.products) ? resp.products : null;
+  const doctypeCounts = {};
+  if (flat) {
+    shape = 'flat products[] grouped by doctype (documented shape)';
+    for (const item of flat) {
+      const dt = item && item.doctype ? String(item.doctype) : 'UNKNOWN';
+      doctypeCounts[dt] = (doctypeCounts[dt] || 0) + 1;
+    }
+    for (const [doctype, key] of Object.entries(DOCTYPE_SECTIONS)) {
+      const items = flat.filter((i) => i && i.doctype === doctype);
+      if (!items.length && !(doctype in doctypeCounts)) continue;
+      sections[key] = {
+        present: true,
+        via: `doctype ${doctype}`,
+        count: items.length,
+        sampleShape: items[0] ? shapeOf(items[0], 0, { maxDepth: 2, sampleStrings: false }) : null
+      };
+    }
+  }
+
+  // Fallback: a structured object with named sections.
+  for (const name of NAMED_SECTIONS) {
+    if (sections[name]) continue;
     const val = resp[name] ?? json[name];
     if (val === undefined) continue;
-    const list = Array.isArray(val) ? val : Array.isArray(val?.products) ? val.products : Array.isArray(val?.suggestions) ? val.suggestions : null;
+    const list = Array.isArray(val) ? val : Array.isArray(val?.products) ? val.products : null;
+    if (shape === 'unknown') shape = 'named sections (non-standard / structured shape)';
     sections[name] = {
       present: true,
-      isArray: Array.isArray(val),
+      via: 'named section',
       count: Array.isArray(list) ? list.length : typeof val?.numberOfProducts === 'number' ? val.numberOfProducts : null,
-      sampleShape: list && list[0] ? shapeOf(list[0], 0, { maxDepth: 2, sampleStrings: false }) : val && typeof val === 'object' ? shapeOf(val, 0, { maxDepth: 2, sampleStrings: false }) : null
+      sampleShape: list && list[0] ? shapeOf(list[0], 0, { maxDepth: 2, sampleStrings: false }) : null
     };
   }
 
@@ -489,12 +533,16 @@ export function summariseAutosuggestResponse(bodyResult, requestedParams = {}) {
     available: true,
     parsed: true,
     byteLength: raw.length,
+    responseShape: shape,
+    totalProducts: flat ? flat.length : null,
+    doctypeCounts,
     topLevelKeys: Object.keys(json).slice(0, 20),
     responseKeys: resp !== json ? Object.keys(resp).slice(0, 20) : null,
     sections,
     requestedPopularProductsCount: requestedParams['popularProducts.count'] ?? null,
     requestedPopularProductsFilter: requestedParams['popularProducts.filter'] ?? null,
-    errorField: json.error || json.message || null
+    errorField: json.error || json.message || null,
+    note: 'Per AUTOSUGGEST_SDK_REFERENCE.md, the API returns a single response.products[] array; doctypeCounts is the authoritative breakdown. POPULAR_PRODUCTS present with a zero popularProducts section would mean a parsing problem here, not an API one.'
   };
 }
 

@@ -26,10 +26,18 @@ export const DEFAULT_SETTINGS = {
   model: PROVIDERS.claude.defaultModel,
   apiKeys: { claude: '', openai: '' },
   captureSeconds: 20,
-  maxPromptTokens: 12000,
+  // Raised alongside retrieval: the fixed prompt now carries targeted
+  // reference excerpts, and the captured context still needs room under it.
+  maxPromptTokens: 16000,
+  // Who the answer is written for. 'support' gets an escalate/don't-escalate
+  // verdict and a ticket draft; 'engineering' gets the root-cause write-up.
+  audience: 'support',
   // Agent mode keeps the debugger attached and lets the model investigate with
-  // tools instead of answering from one static capture.
-  agentMode: true,
+  // tools instead of answering from one static capture. Off by default: it
+  // costs several extra model round-trips, and for routine triage the
+  // deterministic checks, known-issue matching and retrieved reference usually
+  // settle it. Turn it on for the cases they don't.
+  agentMode: false,
   // Auto-stop: for issue types with a deterministic self-debug procedure
   // (results pages, autosuggest data), stop and analyse automatically once
   // the evidence is conclusive — no manual "Stop & analyse" click needed.

@@ -72,10 +72,10 @@
       <summary>Capture options</summary>
       <div class="disclosure-body">
         <label class="check">
-          <input type="checkbox" id="agent-mode" checked />
+          <input type="checkbox" id="agent-mode" />
           <span class="check-text">
-            <span class="check-title">Investigate with tools</span>
-            <span class="check-sub">Model queries the live page instead of one static capture</span>
+            <span class="check-title">Deep investigation</span>
+            <span class="check-sub">Slower and costs more — the model queries the live page. Leave off for routine triage.</span>
           </span>
         </label>
         <label class="check">
@@ -114,6 +114,15 @@
     <p id="status" class="status"></p>
 
     <div id="result" hidden>
+      <div id="known-issue" class="banner known" hidden>
+        <span class="banner-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 12l2 2 4-4" /><circle cx="12" cy="12" r="9" />
+          </svg>
+        </span>
+        <div><strong>Known issue</strong> — <span id="known-issue-text"></span></div>
+      </div>
+      <p id="detected-type" class="field-hint" hidden></p>
       <div id="verdicts" class="verdicts" hidden></div>
 
       <details id="trace-box" class="disclosure" hidden>
@@ -128,6 +137,15 @@
           <button id="copy" class="btn btn-mini">Copy</button>
         </div>
         <pre id="answer" class="card-body"></pre>
+      </div>
+
+      <div id="ticket-box" class="card accent" hidden>
+        <div class="card-head">
+          <strong>Ticket draft</strong>
+          <span class="meta">paste into Jira / Zendesk</span>
+          <button id="copy-ticket" class="btn btn-mini">Copy</button>
+        </div>
+        <pre id="ticket" class="card-body"></pre>
       </div>
 
       <div id="fix-prompt-box" class="card accent" hidden>
@@ -168,6 +186,16 @@
     <div class="field">
       <label class="field-label" for="api-key">API key <small id="key-help"></small></label>
       <input id="api-key" type="password" autocomplete="off" placeholder="sk-…" />
+    </div>
+    <div class="field">
+      <label class="field-label" for="audience">Write answers for</label>
+      <div class="select-wrap">
+        <select id="audience">
+          <option value="support">Support — verdict, escalation call, ticket draft</option>
+          <option value="engineering">Engineering — root cause write-up</option>
+        </select>
+        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </div>
     </div>
     <div class="field">
       <label class="field-label" for="max-tokens">Prompt token budget</label>

@@ -487,3 +487,7 @@ code {
 #answer .md-li { position: relative; padding-left: 14px; margin-top: 3px; color: var(--text-muted); }
 #answer .md-li::before { content: '•'; position: absolute; left: 3px; color: var(--text-faint); }
 #answer br { line-height: 0.4; }
+
+/* Known-issue callout: the "you may not need to escalate" signal. */
+.banner.known { background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
+.banner.known .banner-icon { color: var(--success); }

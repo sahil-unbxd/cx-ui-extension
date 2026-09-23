@@ -44,6 +44,41 @@ const SELF_DEBUG_PREFIX = `Start from context.selfDebug — the extension alread
 // first can short-circuit an otherwise-plausible but wrong issue-specific story.
 const SDK_CHECK_PREFIX = `Check context.sdkAssets first. If its verdict is "load_failed" or an expected asset (search.js/autosuggest.js/their CSS) is missing, that is very likely the actual root cause — say so before reasoning about the issue-specific symptom below, since a widget whose bundle never loaded can't have a "normal" version of this bug. `;
 
+/**
+ * The support-facing output. Support does not need a root-cause essay — they
+ * need to know whether this stops here or goes to engineering, what to tell
+ * the customer, and what to paste into the ticket. Ordering matters: the
+ * escalation decision comes first because it is the one that saves time.
+ */
+export const SUPPORT_OUTPUT_CONTRACT = `
+Answer in this exact markdown structure. Write for a support agent, not an engineer: no field names in the customer-facing parts, no speculation.
+
+**Verdict**
+Exactly one of: Known issue · Config fix · Catalogue / merchandising · Unbxd platform · Customer site code · Working as expected · Need more evidence
+Then one sentence saying what is actually happening, in plain language.
+
+**Escalate?**
+Either "No — " followed by what support or the CX engineer can do now, or "Yes → <team>" followed by why it cannot be resolved without them. If a known issue matched, say so here and point at its documented fix instead of escalating.
+
+**What to tell the customer**
+One or two sentences a support agent can send as-is. No jargon, no internal field or config names.
+
+**Ticket draft**
+Title: <short, specific, searchable>
+Severity: <Critical / High / Medium / Low> — plus a half-sentence why
+Component: <Search / Category / Autosuggest / Catalogue / SDK config / Site integration>
+Steps to reproduce: <numbered, from the captured URL and query>
+Evidence: <2-4 bullets, each a concrete captured value: a status code, a count, a config key and its value, a failing check id>
+
+**Fix prompt**
+Only when the verdict is "Config fix" or "Customer site code": a self-contained prompt for an AI coding agent with the integration repo open, naming the file (the site's \`{siteKey}_search.js\` / \`_autosuggest.js\`), the exact key path, the current and target values. Otherwise write "N/A — not a code fix".
+
+Rules:
+- If a known issue matched, lead with it: support should apply the documented fix rather than raise a new ticket.
+- The context is redacted by design (no response bodies, cookies or auth headers). If something needed is missing, say exactly what to recapture — never guess.
+- Deterministic checks (context.selfDebug) already ran. Cite their ids; do not re-derive or contradict them.
+- Be terse. Every line here gets pasted into a ticket or a customer reply.`;
+
 export const TEMPLATES = {
   autosuggest_alignment: {
     system: `You are a senior Unbxd CX support engineer diagnosing the on-screen position of an autosuggest dropdown relative to its anchor search input. You reason from CDP box models and computed styles — not from a screenshot.`,

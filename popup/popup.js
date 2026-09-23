@@ -46,18 +46,32 @@ function setConnState(text, live = false) {
 function renderIssueTypes(selected) {
   const sel = $('issue-type');
   sel.innerHTML = '';
+  // Support users describe the symptom rather than classify it, so this is the
+  // default: the type is worked out from the captured evidence at stop time.
+  const auto = document.createElement('option');
+  auto.value = 'auto';
+  auto.textContent = 'Auto-detect (recommended)';
+  sel.append(auto);
   for (const t of ISSUE_TYPE_LIST) {
     const opt = document.createElement('option');
     opt.value = t.id;
     opt.textContent = t.label;
     sel.append(opt);
   }
-  sel.value = selected || DEFAULT_ISSUE_TYPE;
+  sel.value = selected || 'auto';
   onIssueTypeChange();
 }
 
 function onIssueTypeChange() {
-  const type = getIssueType($('issue-type').value);
+  const value = $('issue-type').value;
+  if (value === 'auto') {
+    $('issue-hint').textContent = 'Just describe the problem — the type is worked out from the captured API calls and the page.';
+    $('selector-overrides').hidden = true;
+    $('auto-stop-row').hidden = false;
+    chrome.storage.local.set({ lastIssueType: 'auto' });
+    return;
+  }
+  const type = getIssueType(value);
   $('issue-hint').textContent = type.hint;
   $('selector-overrides').hidden = !type.capture.domGeometry;
   // Auto-stop only means anything for issue types with a deterministic
@@ -74,6 +88,9 @@ $('agent-mode').addEventListener('change', () => {
 });
 $('auto-stop').addEventListener('change', () => {
   saveSettings({ autoStop: $('auto-stop').checked }).catch(() => {});
+});
+$('audience').addEventListener('change', () => {
+  saveSettings({ audience: $('audience').value }).catch(() => {});
 });
 
 function setRecording(on, startedAt, autoStopArmed = false) {
@@ -100,8 +117,9 @@ function setRecording(on, startedAt, autoStopArmed = false) {
 
 $('start').addEventListener('click', async () => {
   try {
-    const type = getIssueType($('issue-type').value);
-    const autoStopArmed = Boolean(type.capture.selfDebugKind) && $('auto-stop').checked;
+    const picked = $('issue-type').value;
+    const autoStopArmed =
+      (picked === 'auto' || Boolean(getIssueType(picked).capture.selfDebugKind)) && $('auto-stop').checked;
     await send({
       type: 'capture.start',
       tabId: state.tabId,
@@ -221,6 +239,38 @@ function renderTrace(agent) {
   box.hidden = false;
 }
 
+/** Pulls one bold-labelled section out of the answer for its own copy button. */
+function sectionOf(answer, label) {
+  const re = new RegExp(`\\*\\*${label}\\*\\*\\s*\\n?([\\s\\S]*?)(?=\\n\\*\\*[A-Z]|$)`, 'i');
+  const m = answer.match(re);
+  return m ? m[1].trim() : '';
+}
+
+/** The "you may not need engineering" signal, shown above everything else. */
+function renderKnownIssue(record) {
+  const known = record.knownIssues;
+  const box = $('known-issue');
+  if (!known || !known.matches || !known.matches.length) {
+    box.hidden = true;
+    return;
+  }
+  const top = known.matches[0];
+  $('known-issue-text').textContent =
+    `${top.title}${top.realCase ? ` — previously ${top.realCase}` : ''}. Check the documented fix before escalating.`;
+  box.hidden = false;
+}
+
+function renderDetectedType(record) {
+  const el = $('detected-type');
+  const d = record.detectedIssueType;
+  if (!d) {
+    el.hidden = true;
+    return;
+  }
+  el.textContent = `Detected as ${d.issueTypeId} (${d.confidence} confidence). ${d.reason}`;
+  el.hidden = false;
+}
+
 /** Splits the model's "**Fix prompt**" section out of the answer so it can be
  *  copied on its own — it is addressed to a coding agent, not to the ticket. */
 function splitFixPrompt(answer = '') {
@@ -303,15 +353,23 @@ function renderMarkdown(el, text) {
 
 /** Raw text for the clipboard — the rendered DOM above drops the markdown
  *  syntax, and a ticket wants the markdown. */
-const lastRaw = { answer: '', fixPrompt: '' };
+const lastRaw = { answer: '', fixPrompt: '', ticket: '' };
 
 function renderResult(record) {
   $('result').hidden = false;
+  renderKnownIssue(record);
+  renderDetectedType(record);
   renderVerdicts(record.context);
   renderTrace(record.agent);
   const { body, fixPrompt } = splitFixPrompt(record.answer || '');
   lastRaw.answer = body;
   lastRaw.fixPrompt = fixPrompt;
+  // The ticket draft gets its own copy button — it is the thing support
+  // actually pastes somewhere else.
+  const ticket = sectionOf(record.answer || '', 'Ticket draft');
+  lastRaw.ticket = ticket;
+  $('ticket').textContent = ticket;
+  $('ticket-box').hidden = !ticket;
   renderMarkdown($('answer'), body || '(empty response)');
   $('fix-prompt').textContent = fixPrompt;
   $('fix-prompt-box').hidden = !fixPrompt;
@@ -337,6 +395,7 @@ function wireCopy(buttonId, getText) {
 // the agent instructions, which is what gets pasted somewhere else entirely.
 wireCopy('copy', () => lastRaw.answer || $('answer').textContent);
 wireCopy('copy-fix', () => lastRaw.fixPrompt || $('fix-prompt').textContent);
+wireCopy('copy-ticket', () => lastRaw.ticket || $('ticket').textContent);
 
 /* ---------- settings tab ---------- */
 function renderProviderOptions(settings) {
@@ -413,6 +472,7 @@ async function refreshKeyWarning() {
   // made on the options page actually holds.
   $('agent-mode').checked = settings.agentMode !== false;
   $('auto-stop').checked = settings.autoStop !== false;
+  $('audience').value = settings.audience || 'support';
 
   const stored = await chrome.storage.local.get(['lastIssueType', 'lastAnalysis', 'lastAutoStopError']);
   renderIssueTypes(stored.lastIssueType);

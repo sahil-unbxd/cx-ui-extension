@@ -19,6 +19,19 @@ Section headings are matched case-insensitively but otherwise exactly. Renaming 
 heading without updating `skillsSection` silently drops the playbook from the
 prompt.
 
+This file is not the only prompt input. Two other sources are retrieved at
+runtime and need no code change to improve:
+
+- **`common-issues.md`** — previously-resolved ticket patterns, matched by
+  `src/prompt/known-issues.js`. A match tells support to apply the documented
+  fix instead of escalating, so adding entries here directly reduces escalations.
+- **The SDK reference docs** (`AUTOSUGGEST_SDK_REFERENCE.md`,
+  `unbxd-search-sdk-doc.md`, `INTERNAL_ARCHITECTURE_AND_DEBUGGING_GUIDE.md`) —
+  indexed by `src/prompt/reference-docs.js`, which injects only the few
+  sections matching a capture. Prefer documented behaviour from these over
+  anything restated here; where this file and a reference disagree, the
+  reference wins and this file should be corrected.
+
 Several sections below are **not** tied to a single issue type, and their
 headings are hardcoded in `src/prompt/builder.js`. Rename them there too if you
 rename them here:
@@ -220,22 +233,61 @@ say so rather than trying to answer it from this context.
 (`src/capture/auto-stop.js`) treats it, or any earlier FAIL, as "conclusive"
 and stops the capture on its own, no manual "Stop & analyse" needed.
 
-### A note on `sdkState`
-Unlike the search/category widget (`window.unbxdSearch`, reliable), we do not
-have confirmed evidence of a single global that always holds the autosuggest
-widget's live instance — bundles vary. `sdkState.locationsTried` lists what was
-checked; `sdkState.instanceFound: false` is common and, by itself, proves
-nothing — the checks above answer the question without needing it. Don't
-manufacture a root cause out of that absence.
+### Autosuggest is a different SDK from search
+Per `AUTOSUGGEST_SDK_REFERENCE.md`, autosuggest is **not** the vanilla search
+widget and does not use its shapes. Getting this wrong sends you looking for
+config that was never there:
 
-### Response shape honesty
-`responseSummary.sections` is built from the response param names confirmed in
-a real production request (`popularProducts`, `keywordSuggestions`,
-`topQueries`, `promotedSuggestion`), but the exact JSON shape of the response
-itself has not been captured and pinned down. If a section comes back empty
-when the engineer says otherwise, check `responseSummary.topLevelKeys` /
-`responseKeys` directly — that's ground truth; the section parsing is a
-best-effort convenience on top of it, not the last word.
+- Constructed as `new Autosuggest({...})` from **`window.AutosuggestSDK`** — not
+  `UnbxdSearch`, and not under `window.unbxdSearch`.
+- Config is `siteKey`, `apiKey`, **`inputBoxConfigs`**, **`suggestionBoxConfigs`**,
+  **`apiConfigs`** — there is no `options.products`/`attributesMap` here.
+- State is read with `getState("response.popularProducts")` (dot notation);
+  writes use double underscores (`response__popularProducts`).
+- `sdkState.configs` surfaces the fields that decide whether a call fires at
+  all: `inputBoxConfigs.searchInput` (+ how many elements it matches),
+  `minChars` (default **3**), `debounceDelay` (default **0**), and
+  `apiConfigs.popularProducts.count` (default **3**).
+
+### The response shape (authoritative)
+The API returns **one flat `response.products[]` array**, not named sections.
+Every item carries a **`doctype`**, and the SDK's `getSortedProducts()` groups
+them:
+
+| doctype | Becomes |
+|---|---|
+| `POPULAR_PRODUCTS` | popular products |
+| `KEYWORD_SUGGESTION` | keyword suggestions |
+| `IN_FIELD` | in-field suggestions |
+| `PROMOTED_SUGGESTION` | promoted suggestions |
+| `TOP_SEARCH_QUERIES` | top queries |
+
+`responseSummary.doctypeCounts` is the authoritative breakdown and
+`responseShape` says which shape was seen. **A non-zero `POPULAR_PRODUCTS`
+count with an empty popular-products section means a parsing problem, not an
+API one** — say that rather than reporting "the API returned no popular
+products". (One known inconsistency: the source SDK treats
+`initialRequestProducts` as a keyed object while the minified bundle stores a
+flat array; both are handled.)
+
+### Documented root causes for "suggestions not showing"
+From the reference's troubleshooting section — check these before theorising:
+
+1. `siteKey`, `apiKey` and `inputBoxConfigs.searchInput` must all be set.
+2. **The input element must already exist when the SDK initialises.** On
+   React/Vue/Angular sites it must be constructed in a lifecycle hook after
+   render — this is the most common integration failure.
+3. The shopper must type at least `minChars` characters before any call fires.
+4. Feed uploaded, indexed and FTU flow completed.
+5. CORS: `search.unbxd.io` reachable from the customer's domain.
+6. **Two identical inputs** (desktop + mobile headers sharing a selector):
+   `querySelector` binds the first, which is hidden on mobile — so autosuggest
+   silently does nothing on phones. Check `sdkState.configs.searchInputMatches`
+   — anything above 1 makes this the prime suspect.
+7. **Box appears then vanishes instantly**: a race between `onInputFocus`
+   mounting it and `onDocumentClick` unmounting it, classic when the input sits
+   inside a `<details>`/modal. That is a known pattern with a documented
+   focus-time guard, not a data problem.
 
 ---
 

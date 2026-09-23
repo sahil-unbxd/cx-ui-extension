@@ -1,7 +1,9 @@
 /** Assembles the final prompt: template + SKILLS.md section(s) + engineer's
  *  description + budgeted capture JSON. */
 import { getIssueType } from '../shared/issue-types.js';
-import { getTemplate } from './templates.js';
+import { getTemplate, SUPPORT_OUTPUT_CONTRACT } from './templates.js';
+import { matchKnownIssues, formatKnownIssues } from './known-issues.js';
+import { retrieveReference, formatReference } from './reference-docs.js';
 import { getSkillSection } from './skills.js';
 import { fitJson, estimateTokens } from './budget.js';
 
@@ -27,9 +29,20 @@ const SELF_DEBUG_HEADINGS = {
   autosuggest_data: 'Self-Debug Procedure (Autosuggest Data)'
 };
 
-export async function buildPrompt({ issueTypeId, description, context, pageUrl, maxTokens = 12000 }) {
+export async function buildPrompt({ issueTypeId, description, context, pageUrl, maxTokens = 16000, audience = 'support' }) {
   const type = getIssueType(issueTypeId);
   const template = getTemplate(type.id);
+  // Support gets a ticket and an escalation decision; engineering gets the
+  // root-cause write-up. Same evidence, different deliverable.
+  const output = audience === 'engineering' ? template.output : SUPPORT_OUTPUT_CONTRACT;
+
+  // Both run before the model and are deterministic: whether this shape of
+  // problem is already solved, and what the SDK docs actually say about the
+  // config in play. Neither should depend on the model recalling it.
+  const known = await matchKnownIssues(context, description);
+  const knownBlock = formatKnownIssues(known);
+  const reference = await retrieveReference(context, description, type.id);
+  const referenceBlock = formatReference(reference);
   const headings = [SDK_VALIDATION_HEADING];
   const selfDebugHeading = type.capture && SELF_DEBUG_HEADINGS[type.capture.selfDebugKind];
   if (selfDebugHeading) headings.push(selfDebugHeading);
@@ -48,8 +61,10 @@ export async function buildPrompt({ issueTypeId, description, context, pageUrl, 
   const fixedParts = [
     template.focus,
     skills ? `## Debugging playbook\n${skills}` : '',
-    `## Engineer's description of the problem\n${(description || '').trim() || '(none provided)'}`,
-    template.output,
+    knownBlock,
+    referenceBlock,
+    `## Reported problem\n${(description || '').trim() || '(none provided)'}`,
+    output,
     header
   ];
   const fixedTokens = fixedParts.reduce((n, p) => n + estimateTokens(p), 0);
@@ -59,9 +74,11 @@ export async function buildPrompt({ issueTypeId, description, context, pageUrl, 
   const user = [
     header,
     '',
-    `## Engineer's description of the problem`,
+    `## Reported problem`,
     (description || '').trim() || '(none provided)',
     '',
+    knownBlock ? `## Previously-resolved patterns that match this capture\n${knownBlock}\n` : '',
+    referenceBlock ? `## Documented SDK behaviour (retrieved reference)\n${referenceBlock}\n` : '',
     `## What to focus on`,
     template.focus,
     '',
@@ -72,7 +89,7 @@ export async function buildPrompt({ issueTypeId, description, context, pageUrl, 
     json,
     '```',
     '',
-    template.output
+    output
   ]
     .filter((p) => p !== '')
     .join('\n');
@@ -80,8 +97,13 @@ export async function buildPrompt({ issueTypeId, description, context, pageUrl, 
   return {
     system: template.system,
     user,
+    knownIssues: known,
+    reference,
     stats: {
       issueType: type.id,
+      audience,
+      knownIssueMatches: known ? known.matches.length : 0,
+      referenceExcerpts: reference ? reference.excerpts.length : 0,
       contextTokens: tokens,
       totalTokens: estimateTokens(user) + estimateTokens(template.system),
       contextTruncated: truncated
