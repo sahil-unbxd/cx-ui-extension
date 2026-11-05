@@ -45,3 +45,11 @@ auth headers. See the Options page and `AGENTS.md` for the full boundary.
 
 Playbooks per type live in [SKILLS.md](SKILLS.md); the codebase guide for agents is
 [AGENTS.md](AGENTS.md).
+
+## Support team: MCP server
+
+[`mcp/`](mcp/README.md) runs the same checks from Claude Desktop or Claude Code, with no extension
+and no API key. Paste a customer complaint and a URL. It reproduces the issue in a browser and
+decides **revert to customer** (their theme JS/CSS, apps, CSP, competing search app) vs **raise
+internal Jira** (Unbxd config, API, SDK, catalogue). It then drafts the customer reply or the
+ticket.

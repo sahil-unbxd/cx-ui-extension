@@ -17,6 +17,8 @@
  * evidence (it short-circuits escalation) from a config reference.
  */
 
+import { loadDoc } from '../shared/docs.js';
+
 const DOCS = [
   {
     file: 'AUTOSUGGEST_SDK_REFERENCE.md',
@@ -46,8 +48,7 @@ async function loadSections(doc) {
   if (cache.has(doc.file)) return cache.get(doc.file);
   let text = '';
   try {
-    const res = await fetch(chrome.runtime.getURL(doc.file));
-    text = await res.text();
+    text = await loadDoc(doc.file);
   } catch {
     cache.set(doc.file, []);
     return [];

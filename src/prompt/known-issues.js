@@ -18,12 +18,13 @@
  * `'el' is not a valid DOM selector`) rather than ordinary prose overlap.
  */
 
+import { loadDoc } from '../shared/docs.js';
+
 let cache = null;
 
 async function loadPatterns() {
   if (cache) return cache;
-  const res = await fetch(chrome.runtime.getURL('common-issues.md'));
-  cache = parsePatterns(await res.text());
+  cache = parsePatterns(await loadDoc('common-issues.md'));
   return cache;
 }
 

@@ -29,12 +29,13 @@ const SELF_DEBUG_HEADINGS = {
   autosuggest_data: 'Self-Debug Procedure (Autosuggest Data)'
 };
 
-export async function buildPrompt({ issueTypeId, description, context, pageUrl, maxTokens = 16000, audience = 'support' }) {
+export async function buildPrompt({ issueTypeId, description, context, pageUrl, maxTokens = 16000, audience = 'support', outputContract = null }) {
   const type = getIssueType(issueTypeId);
   const template = getTemplate(type.id);
   // Support gets a ticket and an escalation decision; engineering gets the
-  // root-cause write-up. Same evidence, different deliverable.
-  const output = audience === 'engineering' ? template.output : SUPPORT_OUTPUT_CONTRACT;
+  // root-cause write-up. Same evidence, different deliverable. The MCP server
+  // passes its own contract (TRIAGE_OUTPUT_CONTRACT) explicitly.
+  const output = outputContract || (audience === 'engineering' ? template.output : SUPPORT_OUTPUT_CONTRACT);
 
   // Both run before the model and are deterministic: whether this shape of
   // problem is already solved, and what the SDK docs actually say about the

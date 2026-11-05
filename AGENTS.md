@@ -71,6 +71,11 @@ setting. See the constraint below before touching this path.
 | UI (Debug / Settings tabs) | `popup/` |
 | Full settings page | `options/` |
 | Debugging playbooks (prompt surface) | `SKILLS.md` |
+| How the prompt layer reads the markdown docs (swappable loader) | `src/shared/docs.js` |
+| **Page inventory: scripts/styles/console errors/failed requests attributed to Unbxd vs customer, platform, competing search apps** | `src/capture/page-inventory.js` |
+| **CSS provenance: whose stylesheet hides/moves the widget's elements** | `src/capture/css-provenance.js` |
+| **Ownership routing: revert to customer vs internal Jira (deterministic)** | `src/capture/ownership.js` |
+| **MCP server for the support team (Playwright, stdio)** | `mcp/` — see `mcp/README.md` |
 
 ## Constraints — do not quietly relax these
 
@@ -163,6 +168,54 @@ setting. See the constraint below before touching this path.
   polling the popup for a live value with a timeout), say so explicitly in the
   commit — don't silently start dropping edits made mid-recording.
 
+## The MCP server (`mcp/`)
+
+A second front-end over the same capture code, for the support team in Claude
+Desktop or Claude Code. It drives its own Playwright browser instead of
+`chrome.debugger`. `mcp/src/browser.js` subclasses `CdpSession`, so the recorder,
+strategies, self-debug checks, toolbox and redaction are all the *same modules*.
+Never fork them into `mcp/`. If the MCP needs different behaviour, add a
+parameter (as `buildPrompt`'s `outputContract` and `setDocLoader` do).
+
+What it adds is the routing question support asks on every ticket: is it the
+customer's site (revert to them) or ours (internal Jira)? Three modules answer
+it. They are session-interface-only, so the extension can adopt them, but today
+only the MCP calls them:
+
+- `page-inventory.js` attributes every script, stylesheet, console error and
+  failed request to an owner (`classifyAssetOrigin`: Unbxd CDN/module vs
+  Shopify theme/app/platform, Magento theme/module/core, same-site, third
+  party), and detects the platform, competing search apps and blocked pages.
+- `css-provenance.js` reads the matched cascade for the widget's own elements
+  and reports which stylesheet wins, and where a customer rule overrides an
+  Unbxd rule.
+- `ownership.js` is a pure, weighted classifier over all of the above plus
+  `selfDebug`. It is unit-tested in `mcp/test/ownership.test.js`.
+
+Constraints specific to this path:
+
+- **Ownership is deterministic and must stay honest, like self-debug.** Absence
+  of evidence scores nothing. A customer verdict needs a nameable artefact (a
+  script/stylesheet URL and selector, a missing tag, a blocking header). On a
+  blocked or error page (`access_blocked`), nothing downstream is scored as a
+  finding. That rule exists because the first version blamed a customer for a
+  WAF 405 page; the regression test covers it. Unrelated console noise on a busy
+  storefront is capped low unless the widget is actually failing.
+- **No bot-protection circumvention.** No user-agent spoofing, no stealth flags,
+  no `AutomationControlled` tweaks. A blocked page is reported as
+  *Need more evidence* with the remedy (visible window, attach to the engineer's
+  Chrome, or use the extension).
+- **Lifecycle mirrors "no always-on capture".** The browser launches on demand,
+  each triage gets a fresh page and recorder, and everything closes on
+  `close_browser`, after the idle timeout, or when the client disconnects. When
+  attached to the engineer's Chrome (`UNBXD_MCP_CDP_URL`), only pages the server
+  opened are touched.
+- **stdout is the MCP channel.** Shared code must never `console.log`; the
+  server logs to stderr.
+- `mcp/` has dependencies (`@modelcontextprotocol/sdk`, `playwright-core`). The
+  "no dependencies, no build step" convention still holds for the extension and
+  for `src/`. `src/package.json` only marks `src/` as ES modules for Node.
+
 ## Adding an issue type
 
 Four edits, all keyed by the same id, plus a heading in `SKILLS.md` that matches
@@ -182,7 +235,12 @@ else should need to change; if it does, that is a design smell worth fixing.
 
 ## Testing
 
-No automated tests in v1. Manual loop: `chrome://extensions` → Developer mode →
+`cd mcp && npm test` runs unit tests for attribution, the cascade model and
+ownership routing, plus full-pipeline tests in headless Chrome against a fixture
+store served by request interception (no network). Run it whenever you touch
+`src/capture/` — the extension and the MCP share that code.
+
+The extension itself still has no automated tests. Manual loop: `chrome://extensions` → Developer mode →
 "Load unpacked" → this directory. Reload the extension after editing the service
 worker. The popup's "Prompt sent to the model" and "Captured context" disclosures
 are the debugging surface — check them before blaming the model, and check them

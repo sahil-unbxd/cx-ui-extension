@@ -79,6 +79,49 @@ Rules:
 - Deterministic checks (context.selfDebug) already ran. Cite their ids; do not re-derive or contradict them.
 - Be terse. Every line here gets pasted into a ticket or a customer reply.`;
 
+/**
+ * The MCP triage output (mcp/). Same evidence as SUPPORT_OUTPUT_CONTRACT, but
+ * organised around the one decision support makes on every ticket: send it
+ * back to the customer, or raise an internal Jira. context.ownership is the
+ * deterministic routing suggestion (src/capture/ownership.js); the model's job
+ * is to confirm or overrule it from the evidence and write the two artefacts
+ * support pastes — a customer reply or a Jira ticket.
+ */
+export const TRIAGE_OUTPUT_CONTRACT = `
+Answer in this exact markdown structure. The reader is an Unbxd support agent.
+
+**Decision**
+Exactly one of: ↩️ Revert to customer · 🎫 Raise internal Jira → <team> · 🔍 Need more evidence
+Then: "Owner: <owner label> · Confidence: <high/medium/low>"
+Then one plain-language sentence saying what is actually happening.
+
+**Why**
+- 3 to 5 bullets. Each quotes one concrete captured value and says which side it points at: a check id with its value, an HTTP status with the URL, a console error with the script URL it came from, a CSS property with the stylesheet URL and selector that sets it.
+
+**Reply to customer**
+Only when the decision is Revert to customer or Need more evidence. A message the agent can send as-is: what is wrong on their site, exactly where (the script/stylesheet URL, the selector, the theme or app by name), what to change or check, and how to verify it is fixed. For Need more evidence: precisely what to send back (URL, query, device and browser, screenshot or screen recording, time it happened). No Unbxd-internal names: no config keys, no check ids. Otherwise write "N/A".
+
+**Internal Jira draft**
+Only when the decision is Raise internal Jira. Otherwise write "N/A".
+Title: <short, specific, searchable>
+Team / Component: <from the decision> / <Search API · Category API · Autosuggest · SDK · Config ({siteKey}_search.js) · Catalogue>
+Severity: <Critical / High / Medium / Low> — half a sentence why
+Environment: site, platform + theme, page URL, site key, device
+Steps to reproduce: numbered, from the captured URL and query
+Expected vs actual: one line each
+Root cause analysis: 2 to 4 sentences tied to the evidence
+Evidence: the strongest 3 to 5 captured values
+Fix: for a config root cause, a self-contained prompt for an AI coding agent with the integration repo open, naming the file (the site's \`{siteKey}_search.js\` / \`_autosuggest.js\` / \`.css\`, using the real site key), the exact key path or selector, and the current and target values. Otherwise the concrete next step for that team.
+
+Rules:
+- Start from context.ownership. It is a deterministic, evidence-weighted suggestion, not a verdict. Agree when the evidence supports it; if you overrule it, say which evidence wins. When its confidence is low, name the runner-up as a real possibility and say what would settle it.
+- context.selfDebug checks ran deterministically; cite their ids and do not contradict them. A "skip" is not a failure.
+- Blaming the customer requires a nameable artefact: a script or stylesheet URL from context.pageInventory / context.cssProvenance, a missing tag, a blocking header. If you cannot name one, the decision is not Revert to customer.
+- Unrelated console noise on a busy storefront is not a root cause. Only cite a customer script error if it plausibly explains the reported symptom.
+- If a previously-resolved pattern matched, lead with its documented fix.
+- The context is redacted by design (no response bodies, cookies or auth headers). If something needed is missing, say exactly what to capture next instead of guessing.
+- Be terse. Every line gets pasted into a customer reply or a Jira ticket.`;
+
 export const TEMPLATES = {
   autosuggest_alignment: {
     system: `You are a senior Unbxd CX support engineer diagnosing the on-screen position of an autosuggest dropdown relative to its anchor search input. You reason from CDP box models and computed styles — not from a screenshot.`,

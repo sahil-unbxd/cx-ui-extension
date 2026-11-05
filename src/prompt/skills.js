@@ -2,12 +2,13 @@
  *  just the section for the issue type being debugged. The whole file is never
  *  injected — that is what the per-type `## ` headings are for. */
 
+import { loadDoc } from '../shared/docs.js';
+
 let cache = null;
 
 async function loadSkills() {
   if (cache) return cache;
-  const res = await fetch(chrome.runtime.getURL('SKILLS.md'));
-  cache = await res.text();
+  cache = await loadDoc('SKILLS.md');
   return cache;
 }
 

@@ -1,0 +1,19 @@
+{
+  "name": "unbxd-cx-debug-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server for the Unbxd support team: opens a customer's Shopify/Magento storefront, runs the CX Debug Assistant's deterministic checks, and says whether a UI issue is the customer's code, the Unbxd config, or the Unbxd API.",
+  "type": "module",
+  "bin": { "unbxd-cx-debug-mcp": "src/server.js" },
+  "main": "src/server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js",
+    "smoke": "node test/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "playwright-core": "^1.64.1"
+  }
+}

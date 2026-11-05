@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Marks src/ as ES modules for Node, so the MCP server (mcp/) can import the shared capture/prompt code without a reparse warning. The extension itself ignores this file."
+}
