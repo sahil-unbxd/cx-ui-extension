@@ -36,40 +36,38 @@
   </div>
   <p class="intro">
     Bring-your-own-key. There is no Unbxd backend in this version — analysis requests go
-    straight from your browser to the provider you choose, using your key.
+    straight from your browser to Google's Gemini (Vertex AI or the Gemini API), using your key.
   </p>
 
   <div class="section">
-    <h2>Provider</h2>
+    <h2>Gemini</h2>
     <div class="field">
-      <label class="field-label" for="provider">Provider</label>
+      <label class="field-label" for="endpoint">Gemini via</label>
       <div class="select-wrap">
-        <select id="provider"></select>
+        <select id="endpoint"></select>
         <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
       </div>
     </div>
-    <div class="field">
-      <label class="field-label" for="model">Model</label>
-      <div class="select-wrap">
-        <select id="model"></select>
-        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+    <div id="vertex-fields">
+      <div class="field">
+        <label class="field-label" for="project">
+          Google Cloud project ID <small>leave blank for a Vertex AI express-mode key</small>
+        </label>
+        <input id="project" type="text" autocomplete="off" spellcheck="false" placeholder="my-company-project" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="location">Location <small>e.g. global, us-central1, europe-west4</small></label>
+        <input id="location" type="text" autocomplete="off" spellcheck="false" placeholder="global" />
       </div>
     </div>
-  </div>
-
-  <div class="section">
-    <h2>API keys</h2>
     <div class="field">
-      <label class="field-label" for="key-claude">
-        Anthropic key <small><a class="link" href="https://console.anthropic.com/settings/keys" target="_blank">get one</a></small>
-      </label>
-      <input id="key-claude" type="password" placeholder="sk-ant-…" autocomplete="off" />
+      <label class="field-label" for="model">Model <small>any Gemini model ID enabled for your project</small></label>
+      <input id="model" type="text" list="model-list" autocomplete="off" spellcheck="false" />
+      <datalist id="model-list"></datalist>
     </div>
     <div class="field">
-      <label class="field-label" for="key-openai">
-        OpenAI key <small><a class="link" href="https://platform.openai.com/api-keys" target="_blank">get one</a></small>
-      </label>
-      <input id="key-openai" type="password" placeholder="sk-…" autocomplete="off" />
+      <label class="field-label" for="api-key">API key <small id="key-help"></small></label>
+      <input id="api-key" type="password" autocomplete="off" />
     </div>
   </div>
 

@@ -26,9 +26,8 @@ const MAX_WALL_MS = 120_000;
  * @returns {{text, steps, iterations, usage, stoppedBecause}}
  */
 export async function runAgentLoop({
-  provider,
+  connection,
   model,
-  apiKey,
   system,
   user,
   toolbox,
@@ -50,9 +49,8 @@ export async function runAgentLoop({
     iterations += 1;
 
     const turn = await completeWithTools({
-      provider,
+      connection,
       model,
-      apiKey,
       system: `${system}\n${AGENT_PREAMBLE}`,
       messages,
       tools: toolbox.definitions,
@@ -72,7 +70,9 @@ export async function runAgentLoop({
       break;
     }
 
-    messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls });
+    // `raw` is the model's own turn, replayed verbatim next time (Gemini's
+    // thought signatures live on it).
+    messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, raw: turn.raw });
 
     const toolResults = [];
     for (const call of turn.toolCalls) {
@@ -96,9 +96,8 @@ export async function runAgentLoop({
     // Ask once for a conclusion from what it already has, rather than
     // returning an empty answer after spending the budget.
     const wrapUp = await completeWithTools({
-      provider,
+      connection,
       model,
-      apiKey,
       system: `${system}\n${AGENT_PREAMBLE}`,
       messages: [
         ...messages,
@@ -107,7 +106,9 @@ export async function runAgentLoop({
           text: `Investigation budget reached (${stoppedBecause}). Give your best answer now from the evidence gathered, in the required markdown structure, with no further tool calls. If the evidence is inconclusive, say so and state what to capture next.`
         }
       ],
-      tools: [],
+      // Keep the tools declared (the history calls them) but forbid new calls.
+      tools: toolbox.definitions,
+      toolChoice: 'none',
       signal
     });
     accumulateUsage(usageTotals, wrapUp.usage);

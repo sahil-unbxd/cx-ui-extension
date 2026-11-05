@@ -1,5 +1,5 @@
 import { ISSUE_TYPE_LIST, DEFAULT_ISSUE_TYPE, getIssueType } from '../src/shared/issue-types.js';
-import { PROVIDERS, getSettings, saveSettings } from '../src/shared/settings.js';
+import { GEMINI, getSettings, saveSettings, isConfigured } from '../src/shared/settings.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { tabId: null, recording: false, ticker: null };
@@ -398,49 +398,52 @@ wireCopy('copy-fix', () => lastRaw.fixPrompt || $('fix-prompt').textContent);
 wireCopy('copy-ticket', () => lastRaw.ticket || $('ticket').textContent);
 
 /* ---------- settings tab ---------- */
-function renderProviderOptions(settings) {
-  const providerSel = $('provider');
-  providerSel.innerHTML = '';
-  for (const p of Object.values(PROVIDERS)) {
+function renderGeminiSettings(settings) {
+  const endpointSel = $('endpoint');
+  endpointSel.innerHTML = '';
+  for (const e of Object.values(GEMINI.endpoints)) {
     const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.label;
-    providerSel.append(opt);
+    opt.value = e.id;
+    opt.textContent = e.label;
+    endpointSel.append(opt);
   }
-  providerSel.value = settings.provider;
-  renderModels(settings);
-  $('api-key').value = settings.apiKeys[settings.provider] || '';
-  $('max-tokens').value = settings.maxPromptTokens;
-}
+  endpointSel.value = settings.gemini.endpoint;
+  $('project').value = settings.gemini.project || '';
+  $('location').value = settings.gemini.location || 'global';
+  $('api-key').value = settings.gemini.apiKey || '';
 
-function renderModels(settings) {
-  const provider = PROVIDERS[$('provider').value];
-  const modelSel = $('model');
-  modelSel.innerHTML = '';
-  for (const m of provider.models) {
+  const list = $('model-list');
+  list.innerHTML = '';
+  for (const m of GEMINI.suggestedModels) {
     const opt = document.createElement('option');
     opt.value = m;
-    opt.textContent = m;
-    modelSel.append(opt);
+    list.append(opt);
   }
-  modelSel.value = provider.models.includes(settings.model) ? settings.model : provider.defaultModel;
-  $('api-key').placeholder = provider.keyPlaceholder;
-  $('key-help').innerHTML = `— <a class="link" href="${provider.keysUrl}" target="_blank">get one</a>`;
+  $('model').value = settings.model;
+  $('max-tokens').value = settings.maxPromptTokens;
+  renderEndpoint();
 }
 
-$('provider').addEventListener('change', async () => {
-  const settings = await getSettings();
-  renderModels(settings);
-  $('api-key').value = settings.apiKeys[$('provider').value] || '';
-});
+/** Project/location only apply to Vertex AI. */
+function renderEndpoint() {
+  const endpoint = GEMINI.endpoints[$('endpoint').value];
+  $('vertex-fields').hidden = endpoint.id !== 'vertex';
+  $('api-key').placeholder = endpoint.keyPlaceholder;
+  $('key-help').innerHTML = `— <a class="link" href="${endpoint.keysUrl}" target="_blank">get one</a>`;
+}
+
+$('endpoint').addEventListener('change', renderEndpoint);
 
 $('save').addEventListener('click', async () => {
   const settings = await getSettings();
-  const provider = $('provider').value;
   await saveSettings({
-    provider,
-    model: $('model').value,
-    apiKeys: { ...settings.apiKeys, [provider]: $('api-key').value.trim() },
+    model: $('model').value.trim() || GEMINI.defaultModel,
+    gemini: {
+      endpoint: $('endpoint').value,
+      project: $('project').value.trim(),
+      location: $('location').value.trim() || 'global',
+      apiKey: $('api-key').value.trim()
+    },
     maxPromptTokens: Number($('max-tokens').value) || settings.maxPromptTokens
   });
   $('settings-status').textContent = 'Saved.';
@@ -455,9 +458,8 @@ $('open-options').addEventListener('click', (e) => {
 
 async function refreshKeyWarning() {
   const settings = await getSettings();
-  const missing = !settings.apiKeys[settings.provider];
+  const missing = !isConfigured(settings);
   $('key-warning').hidden = !missing;
-  $('key-warning-provider').textContent = PROVIDERS[settings.provider].label;
   $('start').disabled = missing;
 }
 
@@ -467,7 +469,7 @@ async function refreshKeyWarning() {
   state.tabId = tab ? tab.id : null;
 
   const settings = await getSettings();
-  renderProviderOptions(settings);
+  renderGeminiSettings(settings);
   // Reflect the stored preference rather than the HTML default, so a choice
   // made on the options page actually holds.
   $('agent-mode').checked = settings.agentMode !== false;

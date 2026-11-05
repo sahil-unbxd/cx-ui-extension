@@ -8,8 +8,14 @@ cause plus a recommended fix you can paste into a ticket.
 
 1. `chrome://extensions` → enable **Developer mode**.
 2. **Load unpacked** → select this directory.
-3. Open the popup → **Settings** tab → pick a provider (Claude by default) and paste
-   your API key. Keys live in `chrome.storage.local` on this machine only.
+3. Open the popup → **Settings** tab and set up Gemini:
+   - **Vertex AI** (your company's Google Cloud project): the project ID, the location
+     (`global` unless your project uses a specific region), and a Vertex AI API key. Leave
+     the project blank if you were given a Vertex AI express-mode key.
+   - **Gemini API**: an API key from Google AI Studio.
+
+   Then enter the **model ID** enabled for you (default `gemini-2.5-pro`; check what your
+   project offers). The key lives in `chrome.storage.local` on this machine only.
 
 ## Use
 

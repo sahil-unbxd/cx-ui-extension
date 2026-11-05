@@ -15,7 +15,7 @@ import { createAutoStopWatcher } from '../capture/auto-stop.js';
 import { runAgentLoop } from '../llm/agent.js';
 import { getIssueType } from '../shared/issue-types.js';
 import { detectIssueType } from '../capture/detect-issue-type.js';
-import { getSettings } from '../shared/settings.js';
+import { getSettings, geminiConnection } from '../shared/settings.js';
 
 const HARD_STOP_MS = 5 * 60 * 1000; // never hold the debugger longer than this
 // Agent mode keeps the debugger attached while the model investigates; this is
@@ -205,14 +205,14 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, 
       audience: settings.audience || 'support'
     });
 
-    const apiKey = settings.apiKeys[settings.provider];
+    const connection = geminiConnection(settings);
+    const provider = `gemini (${connection.endpoint === 'aistudio' ? 'Gemini API' : 'Vertex AI'})`;
 
     if (useAgent) {
       const toolbox = createToolbox({ session, recorder });
       agentRun = await runAgentLoop({
-        provider: settings.provider,
+        connection,
         model: settings.model,
-        apiKey,
         system: prompt.system,
         user: prompt.user,
         toolbox,
@@ -221,14 +221,12 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, 
       answer = {
         text: agentRun.text,
         usage: agentRun.usage,
-        model: agentRun.model,
-        provider: settings.provider
+        model: agentRun.model
       };
     } else {
       answer = await complete({
-        provider: settings.provider,
+        connection,
         model: settings.model,
-        apiKey,
         system: prompt.system,
         user: prompt.user
       });
@@ -243,7 +241,7 @@ async function stopAndAnalyse({ description, issueTypeId, options, agentMode }, 
       pageUrl,
       description,
       stats: prompt.stats,
-      provider: answer.provider || settings.provider,
+      provider,
       model: answer.model,
       usage: answer.usage,
       answer: answer.text,

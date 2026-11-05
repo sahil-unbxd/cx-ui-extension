@@ -8,7 +8,7 @@ for a root cause they can paste into a ticket.
 ## Flow
 
 ```
-popup (Debug tab)                 service worker                      provider
+popup (Debug tab)                 service worker                      Gemini
   issue type + description  ──▶  capture.start  ──▶ chrome.debugger.attach
                                                      Recorder: network (always) + console
                                                  ──▶ Page.reload (opt-in, default on)
@@ -19,7 +19,7 @@ popup (Debug tab)                 service worker                      provider
                                                  ──▶ runSelfDebug()  [SRP/PLP/autosuggest-data: ordered pass/fail verdicts]
                                                  ──▶ buildPrompt(template + SKILLS.md + budgeted JSON)
                                                  ──▶ agent mode: runAgentLoop() ⇄ toolbox over LIVE session
-                                                     one-shot mode: client.complete()  ──▶ Anthropic / OpenAI
+                                                     one-shot mode: client.complete()  ──▶ Vertex AI / Gemini API
                                                  ──▶ detach (always, in finally)
   render answer + copy      ◀──  record (stored as `lastAnalysis`)
 ```
@@ -50,7 +50,7 @@ setting. See the constraint below before touching this path.
 | Concern | File |
 |---|---|
 | Issue-type registry (the spine) | `src/shared/issue-types.js` |
-| Settings / provider registry | `src/shared/settings.js` |
+| Settings (Gemini endpoint, model, key) | `src/shared/settings.js` |
 | Canonical Unbxd host/path patterns (API + SDK assets) | `src/shared/unbxd-endpoints.js` |
 | CDP attach/detach wrapper | `src/capture/cdp.js` |
 | Network + console recording | `src/capture/recorder.js` |
@@ -66,7 +66,7 @@ setting. See the constraint below before touching this path.
 | Playbook injection from SKILLS.md | `src/prompt/skills.js` |
 | Token budgeting / shrinking | `src/prompt/budget.js` |
 | Prompt assembly | `src/prompt/builder.js` |
-| LLM client (both providers) | `src/llm/client.js` |
+| LLM client (Gemini: Vertex AI or Gemini API) | `src/llm/client.js` |
 | Orchestration, session lifecycle | `src/background/service-worker.js` |
 | UI (Debug / Settings tabs) | `popup/` |
 | Full settings page | `options/` |
@@ -89,8 +89,18 @@ setting. See the constraint below before touching this path.
   values. If a prompt needs more signal, add a *shape*, not a payload. Token
   budgeting (`budget.js`) runs after redaction and is about cost only.
 - **No backend in v1.** BYO key in `chrome.storage.local` (not `sync` — keys must
-  not ride the profile to other machines), request goes browser → provider. Do not
+  not ride the profile to other machines), request goes browser → Google. Do not
   add a proxy, telemetry or remote logging without an explicit decision.
+- **The model is Gemini only** (team decision: the company has Gemini Enterprise).
+  `client.js` supports two endpoints with the same request body: Vertex AI
+  (project + location + Vertex AI API key, or an express-mode key with no project)
+  and the Gemini API (AI Studio key). The key goes in the `x-goog-api-key` header,
+  never the URL. Two Gemini details that break a tool loop if dropped: the
+  model's turn is replayed verbatim (`raw`), because Gemini 3 thought signatures
+  live on its function-call parts, and the output budget stays large, because
+  thinking tokens count toward it. Both are covered by
+  `mcp/test/gemini-client.test.js`. Old Claude/OpenAI settings and keys are
+  deleted from storage by the migration in `getSettings()`.
 - **Capture strategies stay separated.** An SRP capture must not collect DOM
   geometry; an alignment capture must not collect API payloads. The `capture` flags
   in `issue-types.js` are the contract, and templates must only ask about what their

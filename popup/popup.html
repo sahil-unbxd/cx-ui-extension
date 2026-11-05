@@ -33,7 +33,7 @@
         </svg>
       </span>
       <div>
-        No API key for <span id="key-warning-provider">Claude</span>.
+        No Gemini API key yet.
         <a href="#" data-goto="settings">Add one →</a>
       </div>
     </div>
@@ -170,22 +170,30 @@
 
   <section id="panel-settings" class="panel" hidden>
     <div class="field">
-      <label class="field-label" for="provider">Provider</label>
+      <label class="field-label" for="endpoint">Gemini via</label>
       <div class="select-wrap">
-        <select id="provider"></select>
+        <select id="endpoint"></select>
         <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
       </div>
     </div>
-    <div class="field">
-      <label class="field-label" for="model">Model</label>
-      <div class="select-wrap">
-        <select id="model"></select>
-        <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+    <div id="vertex-fields">
+      <div class="field">
+        <label class="field-label" for="project">Google Cloud project ID <small>blank = Vertex AI express-mode key</small></label>
+        <input id="project" type="text" autocomplete="off" spellcheck="false" placeholder="my-company-project" />
       </div>
+      <div class="field">
+        <label class="field-label" for="location">Location</label>
+        <input id="location" type="text" autocomplete="off" spellcheck="false" placeholder="global" />
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="model">Model <small>any model ID enabled for you</small></label>
+      <input id="model" type="text" list="model-list" autocomplete="off" spellcheck="false" />
+      <datalist id="model-list"></datalist>
     </div>
     <div class="field">
       <label class="field-label" for="api-key">API key <small id="key-help"></small></label>
-      <input id="api-key" type="password" autocomplete="off" placeholder="sk-…" />
+      <input id="api-key" type="password" autocomplete="off" />
     </div>
     <div class="field">
       <label class="field-label" for="audience">Write answers for</label>
@@ -209,9 +217,9 @@
     <p id="settings-status" class="status"></p>
 
     <p class="fineprint">
-      Keys live in <code>chrome.storage.local</code> on this machine only, and go
-      solely to the provider you pick. Captures are redacted before they leave the
-      browser — no response bodies, cookies or auth headers.
+      The key lives in <code>chrome.storage.local</code> on this machine only, and goes
+      solely to Google (Vertex AI or the Gemini API). Captures are redacted before they
+      leave the browser — no response bodies, cookies or auth headers.
     </p>
   </section>
 
